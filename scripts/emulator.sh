@@ -106,7 +106,7 @@ up() {
     docker | podman)
       local user=(); [ "$(uname -s)" = "Linux" ] && user=(--user "$(id -u):$(id -g)")
       "$RUNTIME" run --detach --rm --name "$NAME" --memory=2g --memory-swap=2g \
-        --publish "127.0.0.1:${PORT}:${PORT}" "${user[@]}" \
+        --publish "127.0.0.1:${PORT}:${PORT}" ${user[@]+"${user[@]}"} \
         --env "HOME=${HOME}" --volume "${HOME}/.aws/emulator:${HOME}/.aws/emulator" \
         "$IMAGE" "${args[@]}" >/dev/null ;;
     *) die "unknown EMULATOR_RUNTIME: $RUNTIME" ;;

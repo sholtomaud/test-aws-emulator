@@ -55,7 +55,7 @@ up() {
   local user=(); [ "$(uname -s)" = "Linux" ] && user=(--user "$(id -u):$(id -g)")
   "$RUNTIME" run -d --rm --name "$NAME" -m 4g \
     -p "127.0.0.1:${SERVE_PORT}:8080" \
-    -v "${ROOT}:/work" -w /work "${user[@]}" \
+    -v "${ROOT}:/work" -w /work ${user[@]+"${user[@]}"} \
     -e "EMULATOR_TELEMETRY=${EMULATOR_TELEMETRY:-off}" \
     -e "DEV_CONTAINER_RUNTIME=${RUNTIME}" -e GATEWAY_BIND=0.0.0.0 \
     "$IMAGE" >/dev/null
