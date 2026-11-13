@@ -53,27 +53,69 @@ make confirm-user EMAIL=you@example.com
 
 ### macOS: everything in one container (`USE_CONTAINER=1`, the default on macOS)
 
-The laptop needs only `make` and Apple's
-[`container`](https://github.com/apple/container) CLI (or Docker). No Node.js
-or npm on the host.
+The laptop needs only `make` and a container runtime. No Node.js or npm on the
+host. This is tested on an Apple silicon Mac with Apple's `container` CLI.
 
 The `dev` target of the `Containerfile` is the AWS Emulator image (Amazon
 Linux 2023) plus Node.js and the libraries the test browser needs. The
-emulator is the container's main process; every `make` target is forwarded
-into that container, which starts on demand:
+emulator is the container's main process, and every `make` target is forwarded
+into that container.
+
+#### One-time setup with Apple `container`
+
+1. Install Apple's [`container`](https://github.com/apple/container) CLI from
+   its [releases page](https://github.com/apple/container/releases) (a signed
+   installer package). It needs an Apple silicon Mac; see its README for the
+   macOS version it supports.
+2. `make` comes with the Xcode Command Line Tools (`xcode-select --install`).
+3. Start the container service once. The scripts also start it when it is not
+   running, but the first start asks to install a Linux kernel, which is
+   easier to answer in your own terminal:
+
+   ```bash
+   container system start
+   ```
+
+#### Run it
 
 ```bash
-make synth          # runs `make synth` inside the dev container
 make test
-make serve          # published on http://127.0.0.1:8080
+```
+
+The first run builds the dev image, installs `node_modules` and downloads the
+test browser, so it takes a few minutes. Later runs take about a minute.
+
+Day to day:
+
+```bash
+make synth          # any target runs inside the dev container
+make deploy         # deploy the stack and frontend to the emulator
+make serve          # the app, on http://127.0.0.1:8080 (Ctrl+C to stop)
+make confirm-user EMAIL=you@example.com   # after signing up in the UI
+make shell          # a shell in the container, pointed at the emulator
 make dev-down       # stop the container; emulated resources are lost
 ```
 
-The repository is mounted at `/work`, so `node_modules`, `dist`, `cdk.out` and
-the test browser (`.cache/`) appear in the working tree as Linux builds. The
-tools share a container with the emulator, rather than using a second one,
-because the emulator's TLS certificate is only valid for `localhost`. Its port
-is not published: only the app on port 8080 is.
+The container starts on demand and keeps running, with the emulator's state,
+until `make dev-down`. `make dev-build` rebuilds the image, for example to
+pick up a newer emulator release.
+
+#### What to expect
+
+- **Files in the working tree.** The repository is mounted at `/work`, so
+  `node_modules`, `dist`, `cdk.out` and the test browser (`.cache/`) appear in
+  the checkout as Linux builds. If a macOS Node.js created `node_modules`
+  earlier, delete it first.
+- **One container, not two.** The tools share a container with the emulator
+  because the emulator's TLS certificate is only valid for `localhost`.
+- **Ports.** Only the app is published, on `127.0.0.1:8080`. The emulator's
+  port stays inside the container. To use another port, stop the container
+  and start it with `SERVE_PORT=9000 make serve`.
+- **Emulator log.** `make emulator-logs`, or read `.emulator/emulator.log`.
+- **Docker instead.** `DEV_RUNTIME=docker make test` runs the same image and
+  targets on Docker; it is also what happens when `container` is not installed.
+- **Node.js on the Mac instead.** `USE_CONTAINER=0 make test` runs the tools
+  on the host and only the emulator in a container.
 
 ### Elsewhere: Node.js on the host (`USE_CONTAINER=0`)
 

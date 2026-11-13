@@ -45,13 +45,14 @@ dev-down: ## Stop the dev container (all emulated resources are lost)
 
 ifeq ($(USE_CONTAINER),1)
 
-# Forward every other target into the dev container, starting it if needed.
+# Forward every other target into the dev container, starting it if needed,
+# along with variables given on the command line (e.g. EMAIL=...).
 HOST_TARGETS := help dev-build dev-up dev-down
 FORWARDED := $(filter-out $(HOST_TARGETS),$(MAKECMDGOALS))
 ifneq ($(FORWARDED),)
 .PHONY: $(FORWARDED)
 $(FORWARDED):
-	@$(DEV) exec make --no-print-directory $@
+	@$(DEV) exec make --no-print-directory $@ $(MAKEOVERRIDES)
 endif
 
 else
