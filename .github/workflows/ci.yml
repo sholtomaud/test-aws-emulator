@@ -24,6 +24,9 @@ jobs:
       - run: npm ci
       - run: make typecheck
       - run: make test-unit
+      - name: Report to the job summary
+        if: always()
+        run: make report
 
   emulator:
     name: Functional, smoke and e2e tests (AWS Emulator in Docker)
@@ -52,6 +55,11 @@ jobs:
         run: make test-smoke
       - name: End-to-end tests
         run: make test-e2e
+      # Test results plus the emulator report (version, runtime, deployed
+      # resources, log) go to the job summary via $GITHUB_STEP_SUMMARY.
+      - name: Report to the job summary
+        if: always()
+        run: make report
       - name: Emulator log
         if: failure()
         run: make emulator-logs

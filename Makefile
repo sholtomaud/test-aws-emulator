@@ -105,6 +105,10 @@ test: typecheck test-unit ## Everything: start the emulator, deploy, run all sui
 	$(EMULATOR) up
 	@trap '$(EMULATOR) down' EXIT; $(MAKE) --no-print-directory test-emulator
 
+.PHONY: report
+report: node_modules ## Print the test and emulator report (appended to the GitHub job summary in CI)
+	@if $(EMULATOR) status >/dev/null 2>&1; then $(EMU) node scripts/ci-report.ts; else node scripts/ci-report.ts; fi
+
 # ---- AWS ---------------------------------------------------------------------
 
 .PHONY: aws-deploy
@@ -117,4 +121,4 @@ aws-destroy: ## Remove the stack from the real AWS account
 
 .PHONY: clean
 clean: ## Remove build output
-	rm -rf dist cdk.out .emulator
+	rm -rf dist cdk.out .emulator reports/*.xml

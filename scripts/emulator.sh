@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds, starts and stops AWS Emulator, and runs commands pointed at it.
 #
-#   scripts/emulator.sh runtime | build | up | down | status | logs | run <command...>
+#   scripts/emulator.sh runtime | version | build | up | down | status | logs | run <command...>
 #
 # Where the emulator runs (override with EMULATOR_RUNTIME):
 #   container  macOS with Apple's `container` CLI
@@ -132,6 +132,13 @@ down() {
   echo "AWS Emulator stopped"
 }
 
+version() {
+  case "$RUNTIME" in
+    native) aws-emulator -v ;;
+    container | docker | podman) "$RUNTIME" run --rm "$IMAGE" -v ;;
+  esac
+}
+
 logs() {
   case "$RUNTIME" in
     native) cat "${STATE}/emulator.log" ;;
@@ -165,11 +172,12 @@ run() {
 
 case "${1:-}" in
   runtime) echo "$RUNTIME" ;;
+  version) version ;;
   build) build ;;
   up) up ;;
   down) down ;;
   status) if healthy; then echo "running at ${ENDPOINT} (${RUNTIME})"; else echo "not running"; exit 1; fi ;;
   logs) logs ;;
   run) shift; [ $# -gt 0 ] || die "usage: emulator.sh run <command...>"; run "$@" ;;
-  *) die "usage: emulator.sh runtime|build|up|down|status|logs|run <command...>" ;;
+  *) die "usage: emulator.sh runtime|version|build|up|down|status|logs|run <command...>" ;;
 esac

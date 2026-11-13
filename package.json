@@ -10,10 +10,10 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "node scripts/build-frontend.ts",
-    "test:unit": "node --test --test-reporter=spec \"test/unit/**/*.test.ts\"",
-    "test:functional": "node --test --test-reporter=spec \"test/functional/**/*.test.ts\"",
-    "test:smoke": "node --test --test-reporter=spec \"test/smoke/**/*.test.ts\"",
-    "test:e2e": "node --test --test-reporter=spec \"test/e2e/**/*.test.ts\"",
+    "test:unit": "node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=reports/unit.xml \"test/unit/**/*.test.ts\"",
+    "test:functional": "node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=reports/functional.xml \"test/functional/**/*.test.ts\"",
+    "test:smoke": "node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=reports/smoke.xml \"test/smoke/**/*.test.ts\"",
+    "test:e2e": "node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=reports/e2e.xml \"test/e2e/**/*.test.ts\"",
     "gateway": "node scripts/local-gateway.ts",
     "cdk": "cdk"
   },

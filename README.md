@@ -77,6 +77,12 @@ All suites use Node's built-in test runner.
 | Smoke | `make test-smoke` | emulator + `make deploy` | The deployed stack: outputs, table, site bucket, 401 without a token, one authenticated round trip through API Gateway, Lambda and DynamoDB |
 | End-to-end | `make test-e2e` | emulator + `make deploy` | Chromium (Playwright) drives the deployed web components: sign-up, confirmation, sign-in, add/reload/delete a vendor, sign-out, expired session, layout |
 
+Each suite also writes a JUnit report to `reports/`. `make report` turns those
+into a Markdown report with the test results and an emulator section: its
+version and runtime, the resources the stack deployed into it, and its
+warnings and log. In GitHub Actions the report is appended to the job summary
+(`$GITHUB_STEP_SUMMARY`); locally it is printed.
+
 Scripts and tests refuse to run unless `AWS_ENDPOINT_URL` points at this
 machine, and `scripts/emulator.sh run` removes real AWS credentials from the
 environment, so a test run cannot reach AWS.
@@ -147,5 +153,6 @@ src/frontend/            web components, API and auth clients
 scripts/emulator.sh      emulator lifecycle for each runtime
 scripts/local-gateway.ts local stand-in for CloudFront, API Gateway and Cognito DNS names
 scripts/publish-site.ts  uploads the frontend to the emulated site bucket
+scripts/ci-report.ts     test and emulator report for the job summary
 test/{unit,functional,smoke,e2e}/
 ```
