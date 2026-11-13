@@ -14,10 +14,10 @@ permissions:
 jobs:
   unit:
     name: Typecheck and unit tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -30,13 +30,13 @@ jobs:
 
   emulator:
     name: Functional, smoke and e2e tests (AWS Emulator in Docker)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       EMULATOR_RUNTIME: docker
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -71,12 +71,12 @@ jobs:
     # The macOS workflow (no Node.js on the host), exercised here on Docker:
     # every suite runs inside the dev image built from the Containerfile.
     name: All suites inside the dev container
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
       USE_CONTAINER: 1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build the dev image (AWS Emulator + Node.js)
         run: make dev-build
       - name: Typecheck, deploy and run every suite in the container
