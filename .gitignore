@@ -3,3 +3,4 @@ dist/
 cdk.out/
 .emulator/
 *.log
+.cache/

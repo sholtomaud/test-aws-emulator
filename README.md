@@ -29,42 +29,74 @@ make test
 ```
 
 That installs dependencies, starts the emulator, deploys the stack to it, runs
-every test suite and stops the emulator (about a minute).
+every test suite and stops the emulator (about a minute, after the first run).
 
 To use the app in a browser:
 
 ```bash
-make emulator-build emulator-up deploy
+make emulator-up deploy
 make serve          # http://127.0.0.1:8080
 ```
 
-Sign up in the UI, then confirm the account. The emulator sends no email, so
-confirm it from a second terminal:
+Sign up in the UI, then confirm the account from a second terminal (the
+emulator sends no verification email) and sign in:
 
 ```bash
-make shell
-aws cognito-idp admin-confirm-sign-up --user-pool-id <UserPoolId from the deploy output> --username <email>
+make confirm-user EMAIL=you@example.com
 ```
 
 `make help` lists every target.
 
-## Where the emulator runs
+## Where things run
 
-`scripts/emulator.sh` picks the runtime; set `EMULATOR_RUNTIME` to override.
+`USE_CONTAINER` chooses between two setups.
+
+### macOS: everything in one container (`USE_CONTAINER=1`, the default on macOS)
+
+The laptop needs only `make` and Apple's
+[`container`](https://github.com/apple/container) CLI (or Docker). No Node.js
+or npm on the host.
+
+The `dev` target of the `Containerfile` is the AWS Emulator image (Amazon
+Linux 2023) plus Node.js and the libraries the test browser needs. The
+emulator is the container's main process; every `make` target is forwarded
+into that container, which starts on demand:
+
+```bash
+make synth          # runs `make synth` inside the dev container
+make test
+make serve          # published on http://127.0.0.1:8080
+make dev-down       # stop the container; emulated resources are lost
+```
+
+The repository is mounted at `/work`, so `node_modules`, `dist`, `cdk.out` and
+the test browser (`.cache/`) appear in the working tree as Linux builds. The
+tools share a container with the emulator, rather than using a second one,
+because the emulator's TLS certificate is only valid for `localhost`. Its port
+is not published: only the app on port 8080 is.
+
+### Elsewhere: Node.js on the host (`USE_CONTAINER=0`)
+
+`scripts/emulator.sh` picks how the emulator runs; set `EMULATOR_RUNTIME` to
+override.
 
 | Where | Runtime | How |
 | --- | --- | --- |
-| macOS laptop | `container` | Apple's [`container`](https://github.com/apple/container) CLI builds and runs the `Containerfile` |
-| GitHub Actions | `docker` | Docker builds and runs the `Containerfile` |
+| GitHub Actions | `docker` | Docker builds and runs the `emulator` target of the `Containerfile` |
 | Claude Code cloud session | `native` | Installs the emulator's Linux package and runs it as a process (no image pull or daemon needed) |
 | Other Linux | `docker`, else `podman`, else `native` | |
+| macOS with `USE_CONTAINER=0` | `container`, else `docker` | Needs Node.js 22.18+ on the laptop |
+
+Set `USE_CONTAINER=1` on Linux to use the dev container there too; CI runs
+every suite that way as a third job.
 
 AWS publishes no prebuilt image; the `Containerfile` installs the Linux
 package, as the
 [emulator's Docker guide](https://docs.aws.amazon.com/emulator/latest/userguide/getting-started-docker.html)
-describes. The emulator listens on `127.0.0.1:9297` only and writes its
-per-run credentials and TLS certificate to `~/.aws/emulator/9297/`.
-Telemetry is off by default here (`EMULATOR_TELEMETRY=on` to enable).
+describes. In this setup the emulator listens on `127.0.0.1:9297` only and
+writes its per-run credentials and TLS certificate to `~/.aws/emulator/9297/`.
+
+Telemetry is off by default in both setups (`EMULATOR_TELEMETRY=on` to enable).
 
 ## Tests
 
@@ -145,11 +177,12 @@ This uses your own AWS credentials and creates billable resources.
 ## Layout
 
 ```
-Containerfile            AWS Emulator image
+Containerfile            AWS Emulator image, and the dev image (emulator + Node.js)
 Makefile                 every task
 infra/                   CDK app and stack
 src/lambda/              Lambda handlers
 src/frontend/            web components, API and auth clients
+scripts/dev-container.sh runs the toolchain in the dev container (macOS)
 scripts/emulator.sh      emulator lifecycle for each runtime
 scripts/local-gateway.ts local stand-in for CloudFront, API Gateway and Cognito DNS names
 scripts/publish-site.ts  uploads the frontend to the emulated site bucket
