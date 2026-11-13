@@ -66,3 +66,27 @@ jobs:
       - name: Stop AWS Emulator
         if: always()
         run: make emulator-down
+
+  dev-container:
+    # The macOS workflow (no Node.js on the host), exercised here on Docker:
+    # every suite runs inside the dev image built from the Containerfile.
+    name: All suites inside the dev container
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      USE_CONTAINER: 1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the dev image (AWS Emulator + Node.js)
+        run: make dev-build
+      - name: Typecheck, deploy and run every suite in the container
+        run: make test
+      - name: Report to the job summary
+        if: always()
+        run: make report >> "$GITHUB_STEP_SUMMARY"
+      - name: Emulator log
+        if: failure()
+        run: scripts/dev-container.sh logs
+      - name: Stop the dev container
+        if: always()
+        run: make dev-down

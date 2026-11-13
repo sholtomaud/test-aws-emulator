@@ -146,7 +146,9 @@ export const startGateway = async ({ port = 8080 }: { port?: number } = {}): Pro
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(port, '127.0.0.1', resolve);
+    // Loopback only, except inside the dev container, where the runtime
+    // publishes the port on the host's loopback (GATEWAY_BIND=0.0.0.0).
+    server.listen(port, process.env.GATEWAY_BIND ?? '127.0.0.1', resolve);
   });
   return {
     url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,

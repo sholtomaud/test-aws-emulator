@@ -157,7 +157,7 @@ const emulatorReport = async (): Promise<string[]> => {
     '| --- | --- |',
     `| Version | ${field('Version')} (released ${field('Release date')}) |`,
     `| Commit | \`${field('Commit')}\` |`,
-    `| Runtime | ${emulator('runtime') ?? 'unknown'} |`,
+    `| Runtime | ${process.env.DEV_CONTAINER_RUNTIME ? `dev container (${process.env.DEV_CONTAINER_RUNTIME})` : (emulator('runtime') ?? 'unknown')} |`,
     `| Status | ${status ?? 'not running'} |`,
     '',
     ...(await deployedResources()),

@@ -72,10 +72,10 @@ build() {
     native) install_native; aws-emulator -v ;;
     container)
       container system status >/dev/null 2>&1 || container system start
-      container build --tag "$IMAGE" --file "${ROOT}/Containerfile" \
+      container build --tag "$IMAGE" --file "${ROOT}/Containerfile" --target emulator \
         --build-arg "EMULATOR_ARCH=$(arch)" --build-arg "EMULATOR_CHANNEL=${CHANNEL}" "$ROOT" ;;
     docker | podman)
-      "$RUNTIME" build --tag "$IMAGE" --file "${ROOT}/Containerfile" \
+      "$RUNTIME" build --tag "$IMAGE" --file "${ROOT}/Containerfile" --target emulator \
         --build-arg "EMULATOR_ARCH=$(arch)" --build-arg "EMULATOR_CHANNEL=${CHANNEL}" "$ROOT" ;;
     *) die "unknown EMULATOR_RUNTIME: $RUNTIME" ;;
   esac
