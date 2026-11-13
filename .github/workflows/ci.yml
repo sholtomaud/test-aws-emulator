@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Typecheck and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: make typecheck
+      - run: make test-unit
+
+  emulator:
+    name: Functional, smoke and e2e tests (AWS Emulator in Docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EMULATOR_RUNTIME: docker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Install the browser for e2e tests
+        run: npx playwright install --with-deps chromium
+      - name: Build the AWS Emulator image
+        run: make emulator-build
+      - name: Start AWS Emulator
+        run: make emulator-up
+      - name: Functional tests
+        run: make test-functional
+      - name: Deploy the stack to AWS Emulator
+        run: make deploy
+      - name: Smoke tests
+        run: make test-smoke
+      - name: End-to-end tests
+        run: make test-e2e
+      - name: Emulator log
+        if: failure()
+        run: make emulator-logs
+      - name: Stop AWS Emulator
+        if: always()
+        run: make emulator-down
