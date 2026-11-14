@@ -1,12 +1,30 @@
-# Vendor Tracker
+# Vendor Tracker: a tested serverless AWS reference
 
-A full-stack AWS app, deployed with the AWS CDK and tested locally against
-[AWS Emulator](https://docs.aws.amazon.com/emulator/latest/userguide/what-is-service.html).
-No AWS account is needed to build, run or test it.
+A small full-stack AWS app, built as a reference for how to structure, secure,
+test and ship a serverless project with the AWS CDK. Everything is tested
+locally against [AWS Emulator](https://docs.aws.amazon.com/emulator/latest/userguide/what-is-service.html):
+no AWS account is needed to build, run or test it.
 
-It implements the app from freeCodeCamp's
-[full-stack AWS tutorial](https://www.freecodecamp.org/news/full-stack-aws-react-lambda-dynamodb-tutorial/):
-signed-in users add, view and delete vendors (name, category, contact email).
+The app itself is deliberately simple: it is the one from freeCodeCamp's
+[full-stack AWS tutorial](https://www.freecodecamp.org/news/full-stack-aws-react-lambda-dynamodb-tutorial/),
+where signed-in users add, view and delete their vendors (name, category,
+contact email). What the repository shows is the rest:
+
+- **Local-first testing against AWS Emulator.** Unit, functional, smoke and
+  browser end-to-end suites, run the same way on a laptop, in a dev container
+  and in GitHub Actions. The emulator's differences from AWS found along the
+  way are worked around in one place each, and written up in
+  [`docs/emulator-issues.md`](docs/emulator-issues.md).
+- **Infrastructure tests.** Fine-grained CDK assertions, [cdk-nag](https://github.com/cdklabs/cdk-nag)
+  policy checks with every exception acknowledged next to its resource with a
+  reason, and per-stage template snapshots.
+- **A locked-down edge.** The site comes from a private bucket through
+  CloudFront; the API is on the same origin and answers only CloudFront (a
+  generated secret header, enforced by WAF); Cognito authorizes each request
+  and every user's data is confined to their own DynamoDB partition.
+- **Keyless deploys.** A GitHub Actions workflow promotes each commit through
+  dev, test, uat and prod with approvals, using GitHub's OIDC tokens and one
+  narrowly scoped IAM role per environment; prod keeps its data.
 
 | Piece | Implementation |
 | --- | --- |
@@ -147,10 +165,32 @@ All suites use Node's built-in test runner.
 
 | Suite | Command | Needs | What it covers |
 | --- | --- | --- | --- |
-| Unit | `make test-unit` | nothing | Lambda logic with a fake DynamoDB client; the frontend's API and auth layers with a fake `fetch`; the synthesized CloudFormation template |
+| Unit | `make test-unit` | nothing | Lambda logic with a fake DynamoDB client; the frontend's API and auth layers with a fake `fetch`; the infrastructure (see below) |
 | Functional | `make test-functional` | emulator | The Lambda handlers in-process against emulated DynamoDB, including that users' vendors are kept apart; the frontend's Cognito client against an emulated user pool |
 | Smoke | `make test-smoke` | emulator + `make deploy` | The deployed stack: outputs, table, site bucket, CloudFront (site and API), 401 without or with a forged token, WAF blocking direct API calls, one authenticated round trip through API Gateway, Lambda and DynamoDB, and two users who can't see or delete each other's vendors |
 | End-to-end | `make test-e2e` | emulator + `make deploy` | Chromium (Playwright) drives the deployed web components: sign-up, confirmation, sign-in, add/reload/delete a vendor, sign-out, expired session, layout |
+
+### Infrastructure tests
+
+The CDK app is tested at three levels, all in the unit suite (no AWS, no emulator):
+
+- **Assertions** (`test/unit/stack.test.ts`) on what matters: the table keys,
+  least-privilege grants, the authorizer on every method, the WAF rule and its
+  generated secret, the CloudFront behaviors and cache policy, prod data
+  retention, the GitHub deploy roles' trust conditions.
+- **Policy checks** (`test/unit/nag.test.ts`): [cdk-nag](https://github.com/cdklabs/cdk-nag)'s
+  AWS Solutions rules against every stage and the deploy roles. Each finding
+  is either fixed or acknowledged next to its resource with a reason
+  (`acknowledge(...)` in `infra/vendor-stack.ts`), so the trade-offs are in the
+  code and in review. The same checks run in `infra/app.ts`, so `cdk synth`,
+  `cdk diff` and every deploy fail on a new, unacknowledged finding. A canary
+  test makes sure the checks are live.
+- **Snapshots** (`test/unit/snapshot.test.ts`) of each stage's template in
+  `test/unit/__snapshots__/`. Any infrastructure change fails until accepted
+  with `make snapshots`, so it shows up in the pull request as a template
+  diff. Content hashes are masked, so code changes don't churn them. The same
+  test checks that every stage synthesizes without CDK warnings, and that dev,
+  test and uat have the same resources while prod adds retention.
 
 Each suite also writes a JUnit report to `reports/`. `make report` turns those
 into a Markdown report with the test results and an emulator section: its
@@ -230,6 +270,9 @@ are written up, ready to file, in
   optional on AWS. The stack sets them on the API origin.
 - **CloudFront drops the viewer's `Authorization` header** and ignores
   `DefaultRootObject`, hence the local gateway (see above).
+- **CloudFront fails the bucket's `aws:SecureTransport` deny** when reading
+  through origin access control, so the site bucket enforces HTTPS on AWS
+  only (`enforceSSL` is off in emulator mode).
 - **The emulator does enforce WAF rules, IAM policies and API resource
   policies**, although its documentation says policies are not evaluated.
   Don't rely on that for security testing.
@@ -308,6 +351,18 @@ protection. The other stages delete everything with the stack.
    - **Required reviewers** on `test`, `uat` and `prod`, so the promotion
      waits for an approval before each. Turn on **Prevent self-review** for
      `prod`.
+
+#### Rotating the origin secret
+
+CloudFormation copies the `X-Origin-Verify` secret into the distribution and
+the WAF rule when it updates them, so Secrets Manager's automatic rotation
+would not reach them, and changing the value and redeploying an unchanged
+template would not either. To rotate, replace the secret: rename its construct
+id in `infra/vendor-stack.ts` (`OriginVerifySecret` → `OriginVerifySecret2`)
+and deploy. CloudFormation creates a new secret with a new value, updates WAF
+and CloudFront to it, then deletes the old one. WAF updates in seconds while
+CloudFront takes minutes to propagate, so API calls can be refused for a few
+minutes: do it at a quiet time. The snapshot test shows the change for review.
 
 Reviewers approve before the job runs, so the change summary for an
 environment appears after approval; the dev run's summary shows the same
