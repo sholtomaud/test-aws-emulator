@@ -1,4 +1,4 @@
-// Unit tests: the synthesized CloudFormation template. No emulator.
+// CDK tests: assertions on the synthesized CloudFormation template. No emulator.
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

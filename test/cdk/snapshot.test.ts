@@ -1,7 +1,7 @@
-// Unit tests: snapshots of each stage's synthesized CloudFormation template.
+// CDK tests: snapshots of each stage's synthesized CloudFormation template.
 // Any change to the infrastructure (a property, a policy, a new resource)
 // fails here until it is accepted, so it shows up in review as a diff of
-// test/unit/__snapshots__/. Accept intended changes with `make snapshots`.
+// test/cdk/__snapshots__/. Accept intended changes with `make snapshots`.
 //
 // Content hashes (Lambda bundles, the frontend asset) are replaced with a
 // placeholder: code changes are covered by the other suites, and would
@@ -37,7 +37,7 @@ const matchSnapshot = (name: string, actual: string) => {
     writeFileSync(file, actual);
     return;
   }
-  assert.ok(existsSync(file), `no snapshot for ${name}: run \`make snapshots\` and commit test/unit/__snapshots__/${name}.json`);
+  assert.ok(existsSync(file), `no snapshot for ${name}: run \`make snapshots\` and commit test/cdk/__snapshots__/${name}.json`);
   // Compare line by line so a failure shows the changed lines, not the whole template.
   assert.deepEqual(
     actual.split('\n'),

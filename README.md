@@ -165,37 +165,44 @@ All suites use Node's built-in test runner.
 
 | Suite | Command | Needs | What it covers |
 | --- | --- | --- | --- |
-| Unit | `make test-unit` | nothing | Lambda logic with a fake DynamoDB client; the frontend's API and auth layers with a fake `fetch`; the infrastructure (see below) |
+| Unit | `make test-unit` | nothing | Lambda logic with a fake DynamoDB client; the frontend's API and auth layers with a fake `fetch` |
+| CDK | `make test-cdk` | nothing | The infrastructure: template assertions, cdk-nag policy checks and per-stage snapshots (see below) |
 | Functional | `make test-functional` | emulator | The Lambda handlers in-process against emulated DynamoDB, including that users' vendors are kept apart; the frontend's Cognito client against an emulated user pool |
 | Smoke | `make test-smoke` | emulator + `make deploy` | The deployed stack: outputs, table, site bucket, CloudFront (site and API), 401 without or with a forged token, WAF blocking direct API calls, one authenticated round trip through API Gateway, Lambda and DynamoDB, and two users who can't see or delete each other's vendors |
 | End-to-end | `make test-e2e` | emulator + `make deploy` | Chromium (Playwright) drives the deployed web components: sign-up, confirmation, sign-in, add/reload/delete a vendor, sign-out, expired session, layout |
 
 ### Infrastructure tests
 
-The CDK app is tested at three levels, all in the unit suite (no AWS, no emulator):
+The CDK app is tested at three levels, in the CDK suite (`test/cdk/`, no AWS and no emulator):
 
-- **Assertions** (`test/unit/stack.test.ts`) on what matters: the table keys,
+- **Assertions** (`test/cdk/stack.test.ts`) on what matters: the table keys,
   least-privilege grants, the authorizer on every method, the WAF rule and its
   generated secret, the CloudFront behaviors and cache policy, prod data
   retention, the GitHub deploy roles' trust conditions.
-- **Policy checks** (`test/unit/nag.test.ts`): [cdk-nag](https://github.com/cdklabs/cdk-nag)'s
+- **Policy checks** (`test/cdk/nag.test.ts`): [cdk-nag](https://github.com/cdklabs/cdk-nag)'s
   AWS Solutions rules against every stage and the deploy roles. Each finding
   is either fixed or acknowledged next to its resource with a reason
   (`acknowledge(...)` in `infra/vendor-stack.ts`), so the trade-offs are in the
   code and in review. The same checks run in `infra/app.ts`, so `cdk synth`,
   `cdk diff` and every deploy fail on a new, unacknowledged finding. A canary
   test makes sure the checks are live.
-- **Snapshots** (`test/unit/snapshot.test.ts`) of each stage's template in
-  `test/unit/__snapshots__/`. Any infrastructure change fails until accepted
+- **Snapshots** (`test/cdk/snapshot.test.ts`) of each stage's template in
+  `test/cdk/__snapshots__/`. Any infrastructure change fails until accepted
   with `make snapshots`, so it shows up in the pull request as a template
   diff. Content hashes are masked, so code changes don't churn them. The same
   test checks that every stage synthesizes without CDK warnings, and that dev,
   test and uat have the same resources while prod adds retention.
 
 Each suite also writes a JUnit report to `reports/`. `make report` turns those
-into a Markdown report with the test results and an emulator section: its
-version and runtime, the resources the stack deployed into it, and its
-warnings and log. In GitHub Actions the report is appended to the job summary
+into a Markdown report with:
+
+- the test results of each suite;
+- an infrastructure section: cdk-nag's results per stack (unacknowledged and
+  acknowledged findings), every acknowledged finding with its resource and
+  reason, and the individual CDK tests (from `reports/cdk-nag.json` and
+  `reports/cdk.xml`);
+- an emulator section: its version and runtime, the resources the stack
+  deployed into it, and its warnings and log. In GitHub Actions the report is appended to the job summary
 (`$GITHUB_STEP_SUMMARY`); locally it is printed.
 
 Scripts and tests refuse to run unless `AWS_ENDPOINT_URL` points at this
