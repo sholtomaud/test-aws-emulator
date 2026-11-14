@@ -1,0 +1,401 @@
+{
+  "Resources": {
+    "GitHub38B7EEC4": {
+      "Type": "AWS::IAM::OIDCProvider",
+      "Properties": {
+        "ClientIdList": [
+          "sts.amazonaws.com"
+        ],
+        "Url": "https://token.actions.githubusercontent.com"
+      }
+    },
+    "DeploydevD28C0049": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                  "token.actions.githubusercontent.com:sub": "repo:owner/vendor-tracker:environment:dev"
+                }
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "Federated": {
+                  "Ref": "GitHub38B7EEC4"
+                }
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "Description": "GitHub Actions deploys of owner/vendor-tracker from its \"dev\" environment",
+        "MaxSessionDuration": 3600,
+        "RoleName": "vendor-tracker-deploy-dev"
+      }
+    },
+    "DeploydevDefaultPolicyC80CBBAC": {
+      "Type": "AWS::IAM::Policy",
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole",
+                "sts:TagSession"
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition"
+                    },
+                    ":iam::111111111111:role/cdk-hnb659fds-*-111111111111-*"
+                  ]
+                ]
+              }
+            },
+            {
+              "Action": "cloudformation:DescribeStacks",
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition"
+                    },
+                    ":cloudformation:*:111111111111:stack/VendorStack-dev/*"
+                  ]
+                ]
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "PolicyName": "DeploydevDefaultPolicyC80CBBAC",
+        "Roles": [
+          {
+            "Ref": "DeploydevD28C0049"
+          }
+        ]
+      }
+    },
+    "DeploytestE378616C": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                  "token.actions.githubusercontent.com:sub": "repo:owner/vendor-tracker:environment:test"
+                }
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "Federated": {
+                  "Ref": "GitHub38B7EEC4"
+                }
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "Description": "GitHub Actions deploys of owner/vendor-tracker from its \"test\" environment",
+        "MaxSessionDuration": 3600,
+        "RoleName": "vendor-tracker-deploy-test"
+      }
+    },
+    "DeploytestDefaultPolicyFA981AE4": {
+      "Type": "AWS::IAM::Policy",
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole",
+                "sts:TagSession"
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition"
+                    },
+                    ":iam::111111111111:role/cdk-hnb659fds-*-111111111111-*"
+                  ]
+                ]
+              }
+            },
+            {
+              "Action": "cloudformation:DescribeStacks",
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition"
+                    },
+                    ":cloudformation:*:111111111111:stack/VendorStack-test/*"
+                  ]
+                ]
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "PolicyName": "DeploytestDefaultPolicyFA981AE4",
+        "Roles": [
+          {
+            "Ref": "DeploytestE378616C"
+          }
+        ]
+      }
+    },
+    "Deployuat962EAA06": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                  "token.actions.githubusercontent.com:sub": "repo:owner/vendor-tracker:environment:uat"
+                }
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "Federated": {
+                  "Ref": "GitHub38B7EEC4"
+                }
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "Description": "GitHub Actions deploys of owner/vendor-tracker from its \"uat\" environment",
+        "MaxSessionDuration": 3600,
+        "RoleName": "vendor-tracker-deploy-uat"
+      }
+    },
+    "DeployuatDefaultPolicy582711A9": {
+      "Type": "AWS::IAM::Policy",
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole",
+                "sts:TagSession"
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition"
+                    },
+                    ":iam::111111111111:role/cdk-hnb659fds-*-111111111111-*"
+                  ]
+                ]
+              }
+            },
+            {
+              "Action": "cloudformation:DescribeStacks",
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition"
+                    },
+                    ":cloudformation:*:111111111111:stack/VendorStack-uat/*"
+                  ]
+                ]
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "PolicyName": "DeployuatDefaultPolicy582711A9",
+        "Roles": [
+          {
+            "Ref": "Deployuat962EAA06"
+          }
+        ]
+      }
+    },
+    "DeployprodE39204D8": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                  "token.actions.githubusercontent.com:sub": "repo:owner/vendor-tracker:environment:prod"
+                }
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "Federated": {
+                  "Ref": "GitHub38B7EEC4"
+                }
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "Description": "GitHub Actions deploys of owner/vendor-tracker from its \"prod\" environment",
+        "MaxSessionDuration": 3600,
+        "RoleName": "vendor-tracker-deploy-prod"
+      }
+    },
+    "DeployprodDefaultPolicy15DCC9B8": {
+      "Type": "AWS::IAM::Policy",
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole",
+                "sts:TagSession"
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition"
+                    },
+                    ":iam::111111111111:role/cdk-hnb659fds-*-111111111111-*"
+                  ]
+                ]
+              }
+            },
+            {
+              "Action": "cloudformation:DescribeStacks",
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition"
+                    },
+                    ":cloudformation:*:111111111111:stack/VendorStack-prod/*"
+                  ]
+                ]
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "PolicyName": "DeployprodDefaultPolicy15DCC9B8",
+        "Roles": [
+          {
+            "Ref": "DeployprodE39204D8"
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "DeployRoleArndev": {
+      "Description": "Set as AWS_DEPLOY_ROLE_ARN in the GitHub environment \"dev\"",
+      "Value": {
+        "Fn::GetAtt": [
+          "DeploydevD28C0049",
+          "Arn"
+        ]
+      }
+    },
+    "DeployRoleArntest": {
+      "Description": "Set as AWS_DEPLOY_ROLE_ARN in the GitHub environment \"test\"",
+      "Value": {
+        "Fn::GetAtt": [
+          "DeploytestE378616C",
+          "Arn"
+        ]
+      }
+    },
+    "DeployRoleArnuat": {
+      "Description": "Set as AWS_DEPLOY_ROLE_ARN in the GitHub environment \"uat\"",
+      "Value": {
+        "Fn::GetAtt": [
+          "Deployuat962EAA06",
+          "Arn"
+        ]
+      }
+    },
+    "DeployRoleArnprod": {
+      "Description": "Set as AWS_DEPLOY_ROLE_ARN in the GitHub environment \"prod\"",
+      "Value": {
+        "Fn::GetAtt": [
+          "DeployprodE39204D8",
+          "Arn"
+        ]
+      }
+    }
+  },
+  "Parameters": {
+    "BootstrapVersion": {
+      "Type": "AWS::SSM::Parameter::Value<String>",
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+    }
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5"
+                  ],
+                  {
+                    "Ref": "BootstrapVersion"
+                  }
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+        }
+      ]
+    }
+  }
+}

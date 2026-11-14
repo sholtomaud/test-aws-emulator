@@ -130,6 +130,10 @@ shell: ## Open a shell with AWS tools pointed at the emulator
 test-unit: node_modules ## Unit tests (no emulator)
 	npm run test:unit
 
+.PHONY: snapshots
+snapshots: node_modules ## Accept infrastructure changes: rewrite the template snapshots in test/unit/__snapshots__
+	UPDATE_SNAPSHOTS=1 node --test test/unit/snapshot.test.ts
+
 .PHONY: test-functional
 test-functional: node_modules ## Functional tests against the emulator's DynamoDB and Cognito
 	$(EMU) npm run test:functional

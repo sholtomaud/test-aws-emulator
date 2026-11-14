@@ -6,7 +6,7 @@
 // The role can do one thing: assume the CDK bootstrap roles
 // (cdk-hnb659fds-*), which perform the deployment. Plus DescribeStacks on the
 // vendor stacks, which the post-deploy check reads.
-import { CfnOutput, Duration, Stack, aws_iam as iam } from 'aws-cdk-lib';
+import { CfnOutput, Duration, Stack, Token, Validations, aws_iam as iam } from 'aws-cdk-lib';
 import type { StackProps } from 'aws-cdk-lib';
 import type { Construct } from 'constructs';
 
@@ -36,6 +36,9 @@ export class GitHubDeployStack extends Stack {
       ? iam.OidcProviderNative.fromOidcProviderArn(this, 'GitHub', props.existingProviderArn)
       : new iam.OidcProviderNative(this, 'GitHub', { url: GITHUB_OIDC_URL, clientIds: ['sts.amazonaws.com'] });
     const qualifier = props.qualifier ?? 'hnb659fds';
+    // How cdk-nag spells the account in a finding: the number when the stack
+    // has one, else the placeholder for the AWS::AccountId reference.
+    const account = Token.isUnresolved(this.account) ? '<AWS::AccountId>' : this.account;
 
     for (const environment of props.environments) {
       const role = new iam.Role(this, `Deploy-${environment}`, {
@@ -63,6 +66,14 @@ export class GitHubDeployStack extends Stack {
           resources: [`arn:${this.partition}:cloudformation:*:${this.account}:stack/VendorStack-${environment}/*`],
         }),
       );
+      Validations.of(role).acknowledge({
+        id: `AwsSolutions-IAM5[Resource::arn:<AWS::Partition>:iam::${account}:role/cdk-${qualifier}-*-${account}-*]`,
+        reason: 'Only the CDK bootstrap roles of this account (deploy, file and image publishing, lookup), in any region.',
+      });
+      Validations.of(role).acknowledge({
+        id: `AwsSolutions-IAM5[Resource::arn:<AWS::Partition>:cloudformation:*:${account}:stack/VendorStack-${environment}/*]`,
+        reason: "Read-only DescribeStacks on this environment's stack; the trailing wildcard is the stack's id suffix.",
+      });
       new CfnOutput(this, `DeployRoleArn-${environment}`, {
         value: role.roleArn,
         description: `Set as AWS_DEPLOY_ROLE_ARN in the GitHub environment "${environment}"`,

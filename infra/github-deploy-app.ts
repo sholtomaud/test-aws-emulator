@@ -1,9 +1,11 @@
 // CDK app for the one-time GitHub Actions deploy setup (see the README):
 //   make aws-github-setup REPOSITORY=owner/name ENVIRONMENTS=dev,test
-import { App } from 'aws-cdk-lib';
+import { App, Validations } from 'aws-cdk-lib';
+import { AwsSolutionsChecks } from 'cdk-nag';
 import { GitHubDeployStack } from './github-deploy-stack.ts';
 
 const app = new App();
+Validations.of(app).addPlugins(new AwsSolutionsChecks(app));
 const context = (name: string): string | undefined => app.node.tryGetContext(name) || undefined;
 const repository = context('repository');
 const environments = context('environments');

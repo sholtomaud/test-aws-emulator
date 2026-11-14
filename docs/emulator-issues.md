@@ -36,6 +36,7 @@ Already reported, so not repeated here (add a 👍 instead):
 | 6 | CloudFormation: AWS::CodePipeline::Pipeline rejects a boolean action configuration value | To file |
 | 7 | API Gateway: a mapping template using $context.identity returns 500 | To file |
 | 8 | Bedrock AgentCore: CreatePaymentConnector returns 501, so no payment can be processed | To file |
+| 9 | CloudFront: an S3 origin with origin access control is refused by the bucket's aws:SecureTransport deny | To file |
 
 ---
 
@@ -368,3 +369,42 @@ await acc.send(new ACC.CreatePaymentConnectorCommand({ paymentManagerId: pm.paym
 **Impact and workaround**
 
 AgentCore payments cannot be tested past creating a manager and a session.
+
+---
+
+## 9. CloudFront: an S3 origin with origin access control is refused by the bucket's aws:SecureTransport deny
+
+**What happened**
+
+A distribution reads a private bucket through origin access control. The
+bucket policy allows `s3:GetObject` to `cloudfront.amazonaws.com` for that
+distribution, and (as the AWS CDK's `enforceSSL: true` adds) denies every
+request where `aws:SecureTransport` is `false`. Viewer requests over HTTPS to
+the distribution get `403 AccessDenied` from S3. Removing only the deny
+statement makes the same request return 200.
+
+**What you expected**
+
+CloudFront reaches an S3 REST origin over HTTPS, so `aws:SecureTransport` is
+`true` and the deny does not apply. `enforceSSL` together with origin access
+control is the common pattern (the CDK's `S3BucketOrigin.withOriginAccessControl`
+documentation pairs them), and serves the site on AWS.
+
+**Steps to reproduce**
+
+1. Create a bucket with an object `index.html`, and a distribution with that
+   bucket as an S3 origin using an origin access control (`SigningBehavior:
+   always`, `SigningProtocol: sigv4`) and `ViewerProtocolPolicy:
+   redirect-to-https`.
+2. Put the bucket policy: an `Allow` of `s3:GetObject` to the service
+   principal `cloudfront.amazonaws.com` with `AWS:SourceArn` equal to the
+   distribution ARN, and a `Deny` of `s3:*` to `*` with
+   `"Bool": {"aws:SecureTransport": "false"}`.
+3. `GET https://<distribution>/index.html`: 403 AccessDenied. Without the deny
+   statement: 200. Related: [aws/aws-emulator#409](https://github.com/aws/aws-emulator/issues/409)
+   (the same condition breaks SQS event source mappings).
+
+**Impact and workaround**
+
+Workaround: leave the deny out when deploying to the emulator (this project
+sets `enforceSSL` only on AWS).

@@ -4,6 +4,8 @@ import {
   Duration,
   RemovalPolicy,
   Stack,
+  Token,
+  Validations,
   aws_apigateway as apigateway,
   aws_cloudfront as cloudfront,
   aws_cloudfront_origins as origins,
@@ -11,18 +13,33 @@ import {
   aws_dynamodb as dynamodb,
   aws_lambda as lambda,
   aws_lambda_nodejs as nodejs,
+  aws_logs as logs,
   aws_s3 as s3,
   aws_s3_deployment as s3deploy,
   aws_secretsmanager as secretsmanager,
   aws_wafv2 as wafv2,
 } from 'aws-cdk-lib';
 import type { StackProps } from 'aws-cdk-lib';
-import type { Construct } from 'constructs';
+import type { Construct, IConstruct } from 'constructs';
 
 /** Header CloudFront adds to API requests; the API's WAF web ACL requires it. */
 export const ORIGIN_VERIFY_HEADER = 'X-Origin-Verify';
 
 const path = (relative: string): string => fileURLToPath(new URL(relative, import.meta.url));
+
+/**
+ * Records that a cdk-nag finding on `scope` is a deliberate choice, with the
+ * reason. Each acknowledgement sits next to the resource it is about, and the
+ * tests (test/unit/nag.test.ts) fail on any finding that has none.
+ */
+const acknowledge = (scope: IConstruct, findings: Record<string, string>): void => {
+  for (const [id, reason] of Object.entries(findings)) Validations.of(scope).acknowledge({ id, reason });
+};
+
+/** A stack value as cdk-nag spells it in a finding: itself, or the placeholder for an unresolved reference. */
+const nagValue = (value: string, placeholder: string): string => (Token.isUnresolved(value) ? placeholder : value);
+
+const LAMBDA_BASIC_EXECUTION = 'AwsSolutions-IAM4[Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]';
 
 export interface VendorStackProps extends StackProps {
   /** Directory holding the built frontend. Defaults to dist/frontend. */
@@ -58,23 +75,35 @@ export class VendorStack extends Stack {
       sortKey: { name: 'vendorId', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: dataRemoval,
-      ...(props.retainData && {
-        deletionProtection: true,
-        pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
-      }),
+      // Point-in-time recovery in every stage: a restore can be rehearsed
+      // outside production, and it costs little at this size.
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+      ...(props.retainData && { deletionProtection: true }),
     });
 
+    // Logs are kept for a year in production and a month elsewhere, instead of
+    // CloudWatch's default of forever.
+    const logRetention = props.retainData ? logs.RetentionDays.ONE_YEAR : logs.RetentionDays.ONE_MONTH;
+    const logGroup = (id: string) =>
+      new logs.LogGroup(this, id, { retention: logRetention, removalPolicy: dataRemoval });
+
     // 2. Lambda functions (bundled with esbuild)
-    const fn = (name: string, entry: string) =>
-      new nodejs.NodejsFunction(this, name, {
+    const fn = (name: string, entry: string) => {
+      const handler = new nodejs.NodejsFunction(this, name, {
         entry: path(`../src/lambda/${entry}.ts`),
         handler: 'handler',
         runtime: lambda.Runtime.NODEJS_26_X,
         environment: { TABLE_NAME: vendorTable.tableName },
+        logGroup: logGroup(`${name}Logs`),
         // The AWS SDK is left external (the CDK default): it comes from the
         // Lambda runtime, on AWS and in AWS Emulator alike.
         bundling: { format: nodejs.OutputFormat.ESM, target: 'node26' },
       });
+      acknowledge(handler, {
+        [LAMBDA_BASIC_EXECUTION]: 'The AWS managed basic execution policy only allows writing this function\'s CloudWatch logs.',
+      });
+      return handler;
+    };
     const createVendorLambda = fn('CreateVendorHandler', 'createVendor');
     const getVendorsLambda = fn('GetVendorsHandler', 'getVendors');
     const deleteVendorLambda = fn('DeleteVendorHandler', 'deleteVendor');
@@ -90,8 +119,23 @@ export class VendorStack extends Stack {
       signInAliases: { email: true },
       autoVerify: { email: true },
       userVerification: { emailStyle: cognito.VerificationEmailStyle.CODE },
+      passwordPolicy: {
+        minLength: 12,
+        requireLowercase: true,
+        requireUppercase: true,
+        requireDigits: true,
+        requireSymbols: true,
+        tempPasswordValidity: Duration.days(3),
+      },
+      accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
       removalPolicy: dataRemoval,
       ...(props.retainData && { deletionProtection: true }),
+    });
+    acknowledge(userPool, {
+      'AwsSolutions-COG2':
+        'MFA is not required: the sign-in UI has no MFA step yet. Add TOTP MFA (optional, then required) before storing sensitive data.',
+      'AwsSolutions-COG8':
+        'The Essentials feature plan is used; the Plus plan (threat protection) is a per-user cost to take on when there are real users.',
     });
     userPool.addDomain('VendorUserPoolDomain', {
       // Globally unique: one per account, and per stage when stages share one.
@@ -114,7 +158,43 @@ export class VendorStack extends Stack {
     //
     // No CORS: the browser reaches the API through CloudFront, on the site's
     // own origin, under /api/*.
-    const api = new apigateway.RestApi(this, 'Api', { restApiName: 'Vendor Service' });
+    const accessLogs = logGroup('ApiAccessLogs');
+    const api = new apigateway.RestApi(this, 'Api', {
+      restApiName: 'Vendor Service',
+      // Access logs (one JSON line per request) and execution logs for errors.
+      // API Gateway writes them through the account's CloudWatch role, which
+      // CDK creates (cloudWatchRole).
+      cloudWatchRole: true,
+      deployOptions: {
+        accessLogDestination: new apigateway.LogGroupLogDestination(accessLogs),
+        accessLogFormat: apigateway.AccessLogFormat.jsonWithStandardFields(),
+        loggingLevel: apigateway.MethodLoggingLevel.ERROR,
+        dataTraceEnabled: false, // never log request or response bodies
+        metricsEnabled: true,
+      },
+    });
+    acknowledge(api, {
+      'AwsSolutions-IAM4[Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs]':
+        "The AWS managed policy is the documented way to let API Gateway write this account's API logs.",
+    });
+    // Reject malformed bodies before they reach a Lambda (which also checks them).
+    const validator = api.addRequestValidator('BodyValidator', { validateRequestBody: true });
+    const jsonModel = (name: string, required: string[]) =>
+      api.addModel(name, {
+        contentType: 'application/json',
+        schema: {
+          schema: apigateway.JsonSchemaVersion.DRAFT4,
+          type: apigateway.JsonSchemaType.OBJECT,
+          required,
+          properties: Object.fromEntries(
+            required.map((key) => [key, { type: apigateway.JsonSchemaType.STRING, minLength: 1, maxLength: 320 }]),
+          ),
+        },
+      });
+    const bodyModels: Partial<Record<string, apigateway.IModel>> = {
+      POST: jsonModel('NewVendor', ['name', 'category', 'contactEmail']),
+      DELETE: jsonModel('VendorRef', ['vendorId']),
+    };
     const authorizer = new apigateway.CognitoUserPoolsAuthorizer(this, 'VendorAuthorizer', {
       cognitoUserPools: [userPool],
     });
@@ -130,8 +210,16 @@ export class VendorStack extends Stack {
       ['POST', createVendorLambda],
       ['DELETE', deleteVendorLambda],
     ] as const) {
-      vendors.addMethod(method, integration(handler), authOptions);
+      const model = bodyModels[method];
+      vendors.addMethod(method, integration(handler), {
+        ...authOptions,
+        ...(model && { requestValidator: validator, requestModels: { 'application/json': model } }),
+      });
     }
+    // GET has no body to validate, and takes no parameters.
+    acknowledge(api, {
+      'AwsSolutions-APIG2': 'POST and DELETE validate their JSON body with a model; GET has no body or parameters.',
+    });
 
     // 6. Only CloudFront may call the API. API Gateway has no origin access
     //    control, so CloudFront adds a secret header to every request it sends
@@ -142,6 +230,10 @@ export class VendorStack extends Stack {
       description: 'Shared secret CloudFront sends to API Gateway in X-Origin-Verify',
       generateSecretString: { excludePunctuation: true, passwordLength: 48 },
       removalPolicy: RemovalPolicy.DESTROY, // a new secret is generated if the stack is recreated
+    });
+    acknowledge(originSecret, {
+      'AwsSolutions-SMG4':
+        'CloudFormation copies the value into CloudFront and WAF when it updates them, so automatic rotation would not reach them; rotate by replacing the secret (README, "Rotating the origin secret").',
     });
     const originSecretValue = originSecret.secretValue.unsafeUnwrap();
     const visibility = (metricName: string) => ({
@@ -178,9 +270,22 @@ export class VendorStack extends Stack {
     // 7. S3 bucket for the frontend files (private)
     const siteBucket = new s3.Bucket(this, 'VendorSiteBucket', {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      // Deny non-HTTPS requests. Left out on AWS Emulator only: its CloudFront
+      // reads the bucket in a way the aws:SecureTransport condition counts as
+      // insecure, so the deny would block the site (docs/emulator-issues.md).
+      enforceSSL: !props.emulator,
       removalPolicy: dataRemoval,
       autoDeleteObjects: !props.emulator && !props.retainData,
     });
+    acknowledge(siteBucket, {
+      'AwsSolutions-S1': 'Only CloudFront reads this bucket (origin access control); request logging belongs on the distribution.',
+    });
+    if (props.emulator) {
+      const reason = 'AWS Emulator only: its CloudFront fails aws:SecureTransport when reading the bucket. Enforced on AWS.';
+      acknowledge(siteBucket, { 'AwsSolutions-S10': reason });
+      acknowledge(siteBucket.policy ?? siteBucket, { 'AwsSolutions-S10': reason });
+    }
 
     // 8. CloudFront distribution: the site from S3 (origin access control),
     //    and /api/* from API Gateway. CloudFront forwards the Authorization
@@ -220,6 +325,14 @@ export class VendorStack extends Stack {
     const cfnDistribution = distribution.node.defaultChild as cloudfront.CfnDistribution;
     cfnDistribution.addPropertyOverride('DistributionConfig.Origins.1.CustomOriginConfig.HTTPPort', 80);
     cfnDistribution.addPropertyOverride('DistributionConfig.Origins.1.CustomOriginConfig.HTTPSPort', 443);
+    acknowledge(distribution, {
+      'AwsSolutions-CFR1': 'The app is not restricted by country.',
+      'AwsSolutions-CFR2':
+        'No edge WAF yet: the API stage has its own WAF web ACL. Add one on CloudFront (rate limits, AWS managed rules) for production traffic.',
+      'AwsSolutions-CFR3': 'Access logging is off to avoid a log bucket and its cost; turn on standard logging when there is traffic to analyse.',
+      'AwsSolutions-CFR4':
+        'The default *.cloudfront.net certificate cannot set a minimum TLS version; it needs a custom domain with an ACM certificate.',
+    });
 
     // 9. Deploy the frontend, plus a config.json the app reads at startup, so
     //    the frontend needs no rebuild when the backend's identifiers change.
@@ -229,17 +342,37 @@ export class VendorStack extends Stack {
       userPoolId: userPool.userPoolId,
       userPoolClientId: userPoolClient.userPoolClientId,
     };
-    if (!props.emulator) new s3deploy.BucketDeployment(this, 'DeployWebsite', {
-      sources: [
-        s3deploy.Source.asset(props.frontendDir ?? path('../dist/frontend')),
-        s3deploy.Source.jsonData('config.json', {
-          ...appConfig,
-        }),
-      ],
-      destinationBucket: siteBucket,
-      distribution,
-      distributionPaths: ['/*'],
-    });
+    if (!props.emulator) {
+      new s3deploy.BucketDeployment(this, 'DeployWebsite', {
+        sources: [
+          s3deploy.Source.asset(props.frontendDir ?? path('../dist/frontend')),
+          s3deploy.Source.jsonData('config.json', appConfig),
+        ],
+        destinationBucket: siteBucket,
+        distribution,
+        distributionPaths: ['/*'],
+      });
+      // The deployment's Lambda is a singleton CDK creates and manages (its
+      // runtime and its policy, which is scoped to the asset and site buckets).
+      const deployer = this.node.children.find((child) => child.node.id.startsWith('Custom::CDKBucketDeployment'))!;
+      const cdkManaged = 'Created and managed by the CDK BucketDeployment construct; it runs only during deploys.';
+      acknowledge(deployer, {
+        'AwsSolutions-L1': cdkManaged,
+        [LAMBDA_BASIC_EXECUTION]: cdkManaged,
+        ...Object.fromEntries(
+          [
+            'Action::s3:Abort*',
+            'Action::s3:DeleteObject*',
+            'Action::s3:GetBucket*',
+            'Action::s3:GetObject*',
+            'Action::s3:List*',
+            'Resource::*',
+            'Resource::<VendorSiteBucket4A2885C5.Arn>/*',
+            `Resource::arn:<AWS::Partition>:s3:::cdk-hnb659fds-assets-${nagValue(this.account, '<AWS::AccountId>')}-${nagValue(this.region, '<AWS::Region>')}/*`,
+          ].map((finding) => [`AwsSolutions-IAM5[${finding}]`, `${cdkManaged} Wildcards are scoped to the site and asset buckets.`]),
+        ),
+      });
+    }
 
     // 10. Outputs
     new CfnOutput(this, 'ApiEndpoint', { value: api.url });
