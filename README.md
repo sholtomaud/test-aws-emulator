@@ -11,10 +11,10 @@ signed-in users add, view and delete vendors (name, category, contact email).
 | Piece | Implementation |
 | --- | --- |
 | Frontend | Native web components in TypeScript (no framework), bundled with esbuild |
-| Auth | Amazon Cognito user pool for sign-in, and an identity pool that swaps the ID token for temporary AWS credentials; both called directly with `fetch` |
-| API | API Gateway REST API with IAM auth: `GET`/`POST`/`DELETE /api/vendors`, signed in the browser with SigV4 (Web Crypto, no SDK) |
+| Auth | Amazon Cognito user pool, called directly with `fetch` |
+| API | API Gateway REST API with a Cognito authorizer: `GET`/`POST`/`DELETE /api/vendors` |
 | Logic | Three Lambda functions (Node.js 26) |
-| Data | DynamoDB table keyed by `vendorId` |
+| Data | DynamoDB table keyed by owner and vendor (`ownerId`, `vendorId`): each user sees and changes only their own vendors |
 | Hosting | Private S3 bucket behind CloudFront (origin access control); the API on the same distribution under `/api/*` |
 | Edge protection | The API answers only CloudFront: CloudFront adds a secret header (generated in Secrets Manager) and a WAF web ACL on the stage blocks requests without it |
 | Infrastructure | AWS CDK, in TypeScript |
@@ -148,8 +148,8 @@ All suites use Node's built-in test runner.
 | Suite | Command | Needs | What it covers |
 | --- | --- | --- | --- |
 | Unit | `make test-unit` | nothing | Lambda logic with a fake DynamoDB client; the frontend's API and auth layers with a fake `fetch`; the synthesized CloudFormation template |
-| Functional | `make test-functional` | emulator | The Lambda handlers in-process against emulated DynamoDB; the frontend's Cognito client against an emulated user pool and identity pool |
-| Smoke | `make test-smoke` | emulator + `make deploy` | The deployed stack: outputs, table, site bucket, 401 without a token, one authenticated round trip through API Gateway, Lambda and DynamoDB |
+| Functional | `make test-functional` | emulator | The Lambda handlers in-process against emulated DynamoDB, including that users' vendors are kept apart; the frontend's Cognito client against an emulated user pool |
+| Smoke | `make test-smoke` | emulator + `make deploy` | The deployed stack: outputs, table, site bucket, CloudFront (site and API), 401 without or with a forged token, WAF blocking direct API calls, one authenticated round trip through API Gateway, Lambda and DynamoDB, and two users who can't see or delete each other's vendors |
 | End-to-end | `make test-e2e` | emulator + `make deploy` | Chromium (Playwright) drives the deployed web components: sign-up, confirmation, sign-in, add/reload/delete a vendor, sign-out, expired session, layout |
 
 Each suite also writes a JUnit report to `reports/`. `make report` turns those
@@ -166,25 +166,22 @@ environment, so a test run cannot reach AWS.
 
 1. The user signs in to the Cognito **user pool** (`USER_PASSWORD_AUTH`) and
    gets an ID token.
-2. The app exchanges the token at the Cognito **identity pool**
-   (`GetId`, `GetCredentialsForIdentity`) for temporary credentials of the
-   pool's authenticated role. That role may call only `GET`, `POST` and
-   `DELETE` on `/api/vendors` (`execute-api:Invoke`).
-3. Every API request is signed with SigV4 (`src/frontend/lib/sigv4.ts`) and
-   sent to `/api/vendors` on the site's own origin. CloudFront forwards it to
-   the API Gateway stage, adding `X-Origin-Verify`. The signature is computed
-   for the host and path API Gateway receives
-   (`<id>.execute-api.<region>.amazonaws.com/prod/api/vendors`, from
-   `apiSigningUrl` in `config.json`), which is why it still verifies after
-   CloudFront.
-4. The stage's WAF web ACL blocks any request without the secret header, so
-   calling `execute-api` directly fails even with a valid signature. API
-   Gateway then checks the signature and the caller's IAM permissions.
+2. Every API request goes to `/api/vendors` on the site's own origin, with
+   the token in `Authorization`. CloudFront forwards it to the API Gateway
+   stage, adding `X-Origin-Verify`.
+3. The stage's WAF web ACL blocks any request without that secret header, so
+   calling `execute-api` directly fails even with a valid token.
+4. API Gateway's **Cognito authorizer** checks the token's signature, expiry
+   and issuer, and passes its claims to the Lambda.
+5. The Lambda uses the token's `sub` (the user's id) as `ownerId`. The table
+   is keyed by `(ownerId, vendorId)`, and every read, write and delete is
+   confined to the caller's own partition. Deleting another user's vendor id
+   matches nothing, and the API never returns `ownerId`.
 
-Because the API is same-origin, there is no CORS configuration. The API
-behavior's cache policy includes `Authorization`, `X-Amz-Date` and
-`X-Amz-Security-Token` (CloudFront forwards `Authorization` only when the cache
-policy names it) with a TTL of 0, so nothing is served from the cache.
+Because the API is same-origin, there is no CORS configuration. CloudFront
+forwards `Authorization` only when the cache policy names it, so the API
+behavior's cache policy includes it, with a TTL of 0: nothing is served from
+the cache, and a response could never be served to another user.
 
 ## How the app reaches the emulator
 
@@ -197,17 +194,17 @@ browser reaches CloudFront and Cognito by DNS name. Locally,
 | `/` | CloudFront in front of the site bucket | Objects read from the emulated site bucket; unknown paths get `index.html` |
 | `/api/*` | CloudFront → `https://<id>.execute-api.<region>.amazonaws.com/prod/api/*`, with `X-Origin-Verify` | Forwarded to the emulator with that `Host` header and the secret, read from emulated Secrets Manager |
 | `/cognito` | `https://cognito-idp.<region>.amazonaws.com/` | Forwarded to the emulator |
-| `/cognito-identity` | `https://cognito-identity.<region>.amazonaws.com/` | Forwarded to the emulator |
 
 The emulator's CloudFront does serve traffic, and the smoke tests check that
 the site comes from the private bucket through it and that it gets past the
 WAF to the API. They reach the distribution through the emulator's main port,
 at `/_aws/cloudfront/<distribution id>/`: each distribution also gets a
 listener on a random port of its own (the `CloudFrontURL` output), but a
-container runtime publishes only the main port. But it drops the `Authorization` header, so signed requests go
-through the local gateway instead.
+container runtime publishes only the main port. The emulator's CloudFront
+drops the `Authorization` header, though, so authenticated requests go through
+the local gateway instead.
 
-The frontend reads its API URLs and Cognito IDs from `config.json` at
+The frontend reads its API URL and Cognito IDs from `config.json` at
 startup, so the same build runs in both places.
 
 ## Differences from AWS when deploying to the emulator
@@ -233,9 +230,9 @@ are written up, ready to file, in
   optional on AWS. The stack sets them on the API origin.
 - **CloudFront drops the viewer's `Authorization` header** and ignores
   `DefaultRootObject`, hence the local gateway (see above).
-- **The emulator does enforce IAM auth, IAM policies, API resource policies
-  and WAF rules**, although its documentation says policies are not
-  evaluated. Don't rely on that for security testing.
+- **The emulator does enforce WAF rules, IAM policies and API resource
+  policies**, although its documentation says policies are not evaluated.
+  Don't rely on that for security testing.
 
 ## Differences from the tutorial
 
@@ -243,6 +240,8 @@ are written up, ready to file, in
   (`USER_PASSWORD_AUTH`) instead of Amplify. The user pool client enables that
   flow.
 - `config.json` at runtime replaces build-time `NEXT_PUBLIC_*` variables.
+- Vendors belong to the user who added them; the tutorial shares one list
+  between all signed-in users.
 - `createVendor` validates its input and answers 400 instead of 500.
 - `getVendors` follows DynamoDB pagination.
 - Node.js 26 Lambda runtime, and `S3BucketOrigin` with origin access control
@@ -321,7 +320,7 @@ Containerfile            AWS Emulator image, and the dev image (emulator + Node.
 Makefile                 every task
 infra/                   CDK app and stack
 src/lambda/              Lambda handlers
-src/frontend/            web components, API and auth clients, SigV4 signer
+src/frontend/            web components, API and auth clients
 docs/emulator-issues.md  emulator differences from AWS, written up for its issue tracker
 scripts/dev-container.sh runs the toolchain in the dev container (macOS)
 scripts/emulator.sh      emulator lifecycle for each runtime

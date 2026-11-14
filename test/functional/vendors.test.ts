@@ -15,8 +15,11 @@ const { handler: createVendor } = await import('../../src/lambda/createVendor.ts
 const { handler: getVendors } = await import('../../src/lambda/getVendors.ts');
 const { handler: deleteVendor } = await import('../../src/lambda/deleteVendor.ts');
 
-const event = (body: unknown) => ({ body: JSON.stringify(body) }) as Parameters<typeof createVendor>[0];
-const list = async () => JSON.parse((await getVendors()).body) as Record<string, string>[];
+type Event = Parameters<typeof createVendor>[0];
+/** An API Gateway event as the Cognito authorizer passes it: the caller's claims included. */
+const event = (body: unknown, sub = 'user-a') =>
+  ({ body: body === undefined ? null : JSON.stringify(body), requestContext: { authorizer: { claims: { sub } } } }) as unknown as Event;
+const list = async (sub = 'user-a') => JSON.parse((await getVendors(event(undefined, sub))).body) as Record<string, string>[];
 
 describe('vendor handlers against emulated DynamoDB', () => {
   const dynamodb = new DynamoDBClient({});
@@ -25,8 +28,15 @@ describe('vendor handlers against emulated DynamoDB', () => {
     await dynamodb.send(
       new CreateTableCommand({
         TableName,
-        AttributeDefinitions: [{ AttributeName: 'vendorId', AttributeType: 'S' }],
-        KeySchema: [{ AttributeName: 'vendorId', KeyType: 'HASH' }],
+        // Same keys as the table in infra/vendor-stack.ts.
+        AttributeDefinitions: [
+          { AttributeName: 'ownerId', AttributeType: 'S' },
+          { AttributeName: 'vendorId', AttributeType: 'S' },
+        ],
+        KeySchema: [
+          { AttributeName: 'ownerId', KeyType: 'HASH' },
+          { AttributeName: 'vendorId', KeyType: 'RANGE' },
+        ],
         BillingMode: 'PAY_PER_REQUEST',
       }),
     );
@@ -39,7 +49,7 @@ describe('vendor handlers against emulated DynamoDB', () => {
   });
 
   it('starts with an empty list', async () => {
-    const result = await getVendors();
+    const result = await getVendors(event(undefined));
     assert.equal(result.statusCode, 200);
     assert.deepEqual(JSON.parse(result.body), []);
   });
@@ -76,6 +86,25 @@ describe('vendor handlers against emulated DynamoDB', () => {
     for (const vendorId of ids) await deleteVendor(event({ vendorId }));
   });
 
+  it("keeps each user's vendors to themselves", async () => {
+    const created = await createVendor(event({ name: 'Private', category: 'SaaS', contactEmail: 'a@a.test' }, 'user-a'));
+    const { vendorId } = JSON.parse(created.body);
+    assert.equal((await createVendor(event({ name: 'Theirs', category: 'SaaS', contactEmail: 'b@b.test' }, 'user-b'))).statusCode, 201);
+
+    assert.deepEqual((await list('user-a')).map((v) => v.name), ['Private']);
+    assert.deepEqual((await list('user-b')).map((v) => v.name), ['Theirs']);
+    assert.ok(!('ownerId' in (await list('user-a'))[0]!), 'the owner is not returned');
+
+    // Another user's delete of A's vendor id matches nothing.
+    assert.equal((await deleteVendor(event({ vendorId }, 'user-b'))).statusCode, 200);
+    assert.deepEqual((await list('user-a')).map((v) => v.name), ['Private']);
+
+    await deleteVendor(event({ vendorId }, 'user-a'));
+    for (const vendor of await list('user-b')) await deleteVendor(event({ vendorId: vendor.vendorId }, 'user-b'));
+    assert.deepEqual(await list('user-a'), []);
+    assert.deepEqual(await list('user-b'), []);
+  });
+
   it('treats deleting an unknown vendor as success', async () => {
     assert.equal((await deleteVendor(event({ vendorId: 'does-not-exist' }))).statusCode, 200);
   });
@@ -99,7 +128,7 @@ describe('vendor handlers against emulated DynamoDB', () => {
     t.mock.method(console, 'error', () => {});
     process.env.TABLE_NAME = 'vendors-no-such-table';
     try {
-      assert.equal((await getVendors()).statusCode, 500);
+      assert.equal((await getVendors(event(undefined))).statusCode, 500);
     } finally {
       process.env.TABLE_NAME = TableName;
     }

@@ -1,18 +1,13 @@
-// Minimal Amazon Cognito client for the browser. It signs users in to the user
-// pool, then swaps their ID token for temporary AWS credentials from the
-// identity pool, which sign the API requests (IAM auth). It calls both
-// Cognito APIs directly with fetch (these operations need no AWS signature),
+// Minimal Amazon Cognito user pool client for the browser. It calls the
+// Cognito API directly with fetch (these operations need no AWS signature),
 // so the app needs no auth library.
 import type { AppConfig } from './config.ts';
-import type { Credentials } from './sigv4.ts';
 
 export interface Session {
   email: string;
-  /** The user pool ID token, exchanged for `credentials`. */
+  /** The JWT that API Gateway's Cognito authorizer checks. */
   idToken: string;
-  /** Temporary credentials of the identity pool's authenticated role. */
-  credentials: Credentials;
-  /** Epoch milliseconds: the sooner of the token's and the credentials' expiry. */
+  /** Epoch milliseconds. */
   expiresAt: number;
 }
 
@@ -26,29 +21,20 @@ export class AuthError extends Error {
   }
 }
 
-type AuthConfig = Pick<
-  AppConfig,
-  'region' | 'userPoolId' | 'userPoolClientId' | 'identityPoolId' | 'cognitoEndpoint' | 'identityEndpoint'
->;
+type AuthConfig = Pick<AppConfig, 'region' | 'userPoolClientId' | 'cognitoEndpoint'>;
 type SessionStore = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
 const STORAGE_KEY = 'vendor-tracker.session';
 
 export class CognitoAuth {
   #endpoint: string;
-  #identityEndpoint: string;
   #clientId: string;
-  #identityPoolId: string;
-  #provider: string;
   #fetch: typeof fetch;
   #store: SessionStore;
 
   constructor(config: AuthConfig, deps: { fetch?: typeof fetch; store?: SessionStore } = {}) {
     this.#endpoint = config.cognitoEndpoint ?? `https://cognito-idp.${config.region}.amazonaws.com/`;
-    this.#identityEndpoint = config.identityEndpoint ?? `https://cognito-identity.${config.region}.amazonaws.com/`;
     this.#clientId = config.userPoolClientId;
-    this.#identityPoolId = config.identityPoolId;
-    this.#provider = `cognito-idp.${config.region}.amazonaws.com/${config.userPoolId}`;
     this.#fetch = deps.fetch ?? ((...args) => fetch(...args));
     this.#store = deps.store ?? sessionStorage;
   }
@@ -98,36 +84,13 @@ export class CognitoAuth {
     if (!result?.IdToken) {
       throw new AuthError('UnsupportedChallenge', `Sign-in needs an extra step this app does not support (${data.ChallengeName ?? 'unknown'}).`);
     }
-    const idToken: string = result.IdToken;
-    const { credentials, expiresAt } = await this.#credentialsFor(idToken);
     const session: Session = {
       email,
-      idToken,
-      credentials,
-      expiresAt: Math.min(Date.now() + Number(result.ExpiresIn ?? 3600) * 1000, expiresAt),
+      idToken: result.IdToken,
+      expiresAt: Date.now() + Number(result.ExpiresIn ?? 3600) * 1000,
     };
     this.#store.setItem(STORAGE_KEY, JSON.stringify(session));
     return session;
-  }
-
-  /** Exchanges an ID token for the identity pool's temporary credentials. */
-  async #credentialsFor(idToken: string): Promise<{ credentials: Credentials; expiresAt: number }> {
-    const Logins = { [this.#provider]: idToken };
-    const { IdentityId } = await this.#post(this.#identityEndpoint, 'AWSCognitoIdentityService.GetId', {
-      IdentityPoolId: this.#identityPoolId,
-      Logins,
-    });
-    const { Credentials: issued } = await this.#post(
-      this.#identityEndpoint,
-      'AWSCognitoIdentityService.GetCredentialsForIdentity',
-      { IdentityId, Logins },
-    );
-    if (!issued?.AccessKeyId) throw new AuthError('NoCredentials', 'Sign-in did not return AWS credentials.');
-    return {
-      credentials: { accessKeyId: issued.AccessKeyId, secretAccessKey: issued.SecretKey, sessionToken: issued.SessionToken },
-      // Expiration is epoch seconds.
-      expiresAt: Number(issued.Expiration) * 1000,
-    };
   }
 
   signOut(): void {
@@ -138,7 +101,7 @@ export class CognitoAuth {
   session(): Session | undefined {
     try {
       const session = JSON.parse(this.#store.getItem(STORAGE_KEY) ?? 'null') as Session | null;
-      if (session?.credentials?.accessKeyId && session.expiresAt > Date.now()) return session;
+      if (session?.idToken && session.expiresAt > Date.now()) return session;
     } catch {
       // Corrupt stored value: treat as signed out.
     }

@@ -1,11 +1,11 @@
 // Unit tests: Lambda business logic with a fake DynamoDB client. No emulator.
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it, mock } from 'node:test';
-import { DeleteCommand, PutCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { DeleteCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { createVendor, deleteVendor, getVendors } from '../../src/lambda/vendors.ts';
 import type { Db } from '../../src/lambda/vendors.ts';
 
-type Command = PutCommand | ScanCommand | DeleteCommand;
+type Command = PutCommand | QueryCommand | DeleteCommand;
 
 /** A fake document client that records commands and replies with `respond`. */
 const fakeDb = (respond: (command: Command) => unknown = () => ({})) => {
@@ -19,7 +19,13 @@ const fakeDb = (respond: (command: Command) => unknown = () => ({})) => {
   return { db, commands };
 };
 
-const event = (body: unknown) => ({ body: typeof body === 'string' ? body : JSON.stringify(body) });
+const OWNER = 'cognito-sub-123';
+/** An API Gateway event as the Cognito authorizer passes it on: with the caller's claims. */
+/** `sub` null: no authorizer on the method; '' a token without the claim. */
+const event = (body?: unknown, sub: string | null = OWNER) => ({
+  body: body === undefined || body === null ? null : typeof body === 'string' ? body : JSON.stringify(body),
+  requestContext: { authorizer: sub === null ? null : { claims: { sub, email: 'a@b.test' } } },
+});
 const acme = { name: 'Acme', category: 'SaaS', contactEmail: 'sales@acme.test' };
 
 beforeEach(() => {
@@ -41,7 +47,10 @@ describe('createVendor', () => {
     const put = commands[0];
     assert.ok(put instanceof PutCommand);
     assert.equal(put.input.TableName, 'vendors-test');
-    assert.deepEqual({ ...put.input.Item, createdAt: undefined }, { ...acme, vendorId: body.vendorId, createdAt: undefined });
+    assert.deepEqual(
+      { ...put.input.Item, createdAt: undefined },
+      { ...acme, ownerId: OWNER, vendorId: body.vendorId, createdAt: undefined },
+    );
     assert.ok(!Number.isNaN(Date.parse(put.input.Item?.createdAt)));
   });
 
@@ -68,7 +77,7 @@ describe('createVendor', () => {
   ] as const) {
     it(`rejects ${label} with 400 and writes nothing`, async () => {
       const { db, commands } = fakeDb();
-      const result = await createVendor(db, { body: body === null ? null : event(body).body });
+      const result = await createVendor(db, event(body));
       assert.equal(result.statusCode, 400);
       assert.equal(commands.length, 0);
     });
@@ -92,50 +101,55 @@ describe('createVendor', () => {
 });
 
 describe('getVendors', () => {
-  it('returns every item in the table', async () => {
-    const items = [{ vendorId: '1', ...acme }];
+  it("queries only the caller's partition and leaves the owner out of the response", async () => {
+    const items = [{ ownerId: OWNER, vendorId: '1', ...acme }];
     const { db, commands } = fakeDb(() => ({ Items: items }));
-    const result = await getVendors(db);
+    const result = await getVendors(db, event());
     assert.equal(result.statusCode, 200);
-    assert.deepEqual(JSON.parse(result.body), items);
-    assert.deepEqual((commands[0] as ScanCommand).input, { TableName: 'vendors-test' });
+    assert.deepEqual(JSON.parse(result.body), [{ vendorId: '1', ...acme }]);
+    assert.ok(commands[0] instanceof QueryCommand);
+    assert.deepEqual(commands[0].input, {
+      TableName: 'vendors-test',
+      KeyConditionExpression: 'ownerId = :owner',
+      ExpressionAttributeValues: { ':owner': OWNER },
+    });
   });
 
-  it('returns an empty array for an empty table', async () => {
+  it('returns an empty array when the caller has no vendors', async () => {
     const { db } = fakeDb(() => ({}));
-    assert.deepEqual(JSON.parse((await getVendors(db)).body), []);
+    assert.deepEqual(JSON.parse((await getVendors(db, event())).body), []);
   });
 
-  it('follows pagination until the scan is complete', async () => {
+  it('follows pagination until the query is complete', async () => {
     const pages = [
-      { Items: [{ vendorId: '1' }], LastEvaluatedKey: { vendorId: '1' } },
-      { Items: [{ vendorId: '2' }] },
+      { Items: [{ ownerId: OWNER, vendorId: '1' }], LastEvaluatedKey: { ownerId: OWNER, vendorId: '1' } },
+      { Items: [{ ownerId: OWNER, vendorId: '2' }] },
     ];
     const { db, commands } = fakeDb(() => pages.shift());
-    const result = await getVendors(db);
+    const result = await getVendors(db, event());
     assert.deepEqual(JSON.parse(result.body), [{ vendorId: '1' }, { vendorId: '2' }]);
     assert.equal(commands.length, 2);
-    assert.deepEqual((commands[1] as ScanCommand).input.ExclusiveStartKey, { vendorId: '1' });
+    assert.deepEqual((commands[1] as QueryCommand).input.ExclusiveStartKey, { ownerId: OWNER, vendorId: '1' });
   });
 
   it('returns 500 when DynamoDB fails', async () => {
     const { db } = fakeDb(() => {
       throw new Error('boom');
     });
-    const result = await getVendors(db);
+    const result = await getVendors(db, event());
     assert.equal(result.statusCode, 500);
     assert.deepEqual(JSON.parse(result.body), { error: 'Failed to fetch vendors' });
   });
 });
 
 describe('deleteVendor', () => {
-  it('deletes by vendorId', async () => {
+  it("deletes by vendorId within the caller's partition", async () => {
     const { db, commands } = fakeDb();
     const result = await deleteVendor(db, event({ vendorId: 'abc' }));
     assert.equal(result.statusCode, 200);
     assert.deepEqual(JSON.parse(result.body), { message: 'Vendor deleted' });
     assert.ok(commands[0] instanceof DeleteCommand);
-    assert.deepEqual(commands[0].input, { TableName: 'vendors-test', Key: { vendorId: 'abc' } });
+    assert.deepEqual(commands[0].input, { TableName: 'vendors-test', Key: { ownerId: OWNER, vendorId: 'abc' } });
   });
 
   for (const [label, body] of [
@@ -162,8 +176,27 @@ describe('deleteVendor', () => {
 describe('response headers', () => {
   it('are JSON with no CORS headers: the API is same-origin behind CloudFront', async () => {
     const { db } = fakeDb();
-    for (const result of [await getVendors(db), await deleteVendor(db, event({}))]) {
+    for (const result of [await getVendors(db, event()), await deleteVendor(db, event({}))]) {
       assert.deepEqual(result.headers, { 'Content-Type': 'application/json' });
     }
   });
+});
+
+describe('without the authorizer claims', () => {
+  // Only possible if a method were deployed without the Cognito authorizer:
+  // refuse rather than act on an unknown owner.
+  for (const [name, call] of [
+    ['createVendor', (db: Db, e: ReturnType<typeof event>) => createVendor(db, e)],
+    ['getVendors', (db: Db, e: ReturnType<typeof event>) => getVendors(db, e)],
+    ['deleteVendor', (db: Db, e: ReturnType<typeof event>) => deleteVendor(db, e)],
+  ] as const) {
+    it(`${name} answers 401 and touches nothing`, async () => {
+      const { db, commands } = fakeDb();
+      for (const e of [event({ ...acme, vendorId: 'abc' }, null), event({ ...acme, vendorId: 'abc' }, '')]) {
+        const result = await call(db, e);
+        assert.equal(result.statusCode, 401);
+      }
+      assert.equal(commands.length, 0);
+    });
+  }
 });

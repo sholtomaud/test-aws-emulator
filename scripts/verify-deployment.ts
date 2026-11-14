@@ -3,8 +3,8 @@
 // nothing and needs only cloudformation:DescribeStacks:
 //
 //   - the site loads through CloudFront, with a config.json for this stack
-//   - /api/* through CloudFront reaches API Gateway: an unsigned request
-//     gets IAM auth's 403, not the WAF block
+//   - /api/* through CloudFront reaches API Gateway: a request without a
+//     token gets the Cognito authorizer's 401, not the WAF block (403)
 //   - calling execute-api directly, skipping CloudFront, is blocked by WAF
 //
 //   STACK_NAME=VendorStack-dev node scripts/verify-deployment.ts
@@ -76,17 +76,15 @@ const checks: [string, () => Promise<void>][] = [
     async () => {
       const config = JSON.parse((await get(`${site}/config.json`)).body) as Record<string, string>;
       assert.equal(config.apiUrl, '/api');
-      assert.equal(config.apiSigningUrl, api);
       assert.equal(config.userPoolId, outputs.UserPoolId);
-      assert.equal(config.identityPoolId, outputs.IdentityPoolId);
+      assert.equal(config.userPoolClientId, outputs.UserPoolClientId);
     },
   ],
   [
-    'CloudFront gets through to the API (IAM auth answers, not WAF)',
+    'CloudFront gets through to the API (the authorizer answers, not WAF)',
     async () => {
       const response = await get(`${site}/api/vendors`);
-      assert.equal(response.status, 403);
-      assert.match(response.body, /Missing Authentication Token/);
+      assert.equal(response.status, 401);
     },
   ],
   [
@@ -95,7 +93,6 @@ const checks: [string, () => Promise<void>][] = [
       const response = await get(new URL('api/vendors', api).href);
       assert.equal(response.status, 403);
       assert.match(response.body, /Forbidden/);
-      assert.doesNotMatch(response.body, /Missing Authentication Token/);
     },
   ],
 ];

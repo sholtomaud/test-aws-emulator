@@ -38,11 +38,9 @@ await put(
   'config.json',
   JSON.stringify({
     apiUrl: '/api',
-    apiSigningUrl: outputs.ApiEndpoint,
     region: process.env.AWS_REGION ?? 'us-east-1',
     userPoolId: outputs.UserPoolId,
     userPoolClientId: outputs.UserPoolClientId,
-    identityPoolId: outputs.IdentityPoolId,
   }),
 );
 console.log(`Published ${files.length + 1} files to s3://${outputs.SiteBucketName}`);

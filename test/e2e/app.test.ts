@@ -182,15 +182,11 @@ describe('Vendor Tracker in the browser', () => {
     });
 
     it('returns to sign-in when the API rejects the session', async () => {
-      // Corrupt the stored credentials: IAM auth rejects the signature (403)
-      // on the next request.
+      // Corrupt the stored token: the API answers 401 on the next request.
       await page.evaluate(() => {
         const key = 'vendor-tracker.session';
         const session = JSON.parse(sessionStorage.getItem(key)!);
-        sessionStorage.setItem(
-          key,
-          JSON.stringify({ ...session, credentials: { ...session.credentials, secretAccessKey: 'not-the-key' } }),
-        );
+        sessionStorage.setItem(key, JSON.stringify({ ...session, idToken: 'not-a-token' }));
       });
       await page.reload();
       await heading('Sign in').waitFor();

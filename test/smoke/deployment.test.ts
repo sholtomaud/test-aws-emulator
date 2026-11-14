@@ -1,7 +1,8 @@
 // Smoke tests: is the stack that `make deploy` put into AWS Emulator alive and
 // wired together? Quick checks of each deployed piece, that the API takes only
-// signed requests that came through CloudFront, plus one authenticated round
-// trip through API Gateway -> Lambda -> DynamoDB.
+// signed-in requests that came through CloudFront, that each user sees only
+// their own vendors, plus an authenticated round trip through API Gateway ->
+// Lambda -> DynamoDB.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { request } from 'node:https';
@@ -13,7 +14,7 @@ import { distributionUrl, emulatorEndpoint, stackOutputs } from '../../scripts/l
 import type { StackOutputs } from '../../scripts/lib/emulator.ts';
 import { startGateway } from '../../scripts/local-gateway.ts';
 import type { Gateway } from '../../scripts/local-gateway.ts';
-import { createUser, credentialsFor, deleteUser, idTokenFor, signedHeaders } from '../helpers/users.ts';
+import { createUser, deleteUser, idTokenFor } from '../helpers/users.ts';
 
 /**
  * A request to the emulator's endpoint: to `url`, or to `path` with a `host`
@@ -64,16 +65,19 @@ describe('deployed stack', () => {
   });
 
   it('has every stack output', () => {
-    for (const key of ['ApiEndpoint', 'UserPoolId', 'UserPoolClientId', 'IdentityPoolId', 'OriginSecretArn', 'TableName', 'SiteBucketName', 'CloudFrontURL', 'DistributionId'] as const) {
+    for (const key of ['ApiEndpoint', 'UserPoolId', 'UserPoolClientId', 'OriginSecretArn', 'TableName', 'SiteBucketName', 'CloudFrontURL', 'DistributionId'] as const) {
       assert.ok(outputs[key], `missing output ${key}`);
     }
     assert.match(outputs.ApiEndpoint, /^https:\/\/[a-z0-9]+\.execute-api\.[a-z0-9-]+\.amazonaws\.com\/prod\/$/);
   });
 
-  it('has an active vendor table keyed by vendorId', async () => {
+  it('has an active vendor table keyed by owner and vendor', async () => {
     const { Table } = await dynamodb.send(new DescribeTableCommand({ TableName: outputs.TableName }));
     assert.equal(Table?.TableStatus, 'ACTIVE');
-    assert.deepEqual(Table?.KeySchema, [{ AttributeName: 'vendorId', KeyType: 'HASH' }]);
+    assert.deepEqual(Table?.KeySchema, [
+      { AttributeName: 'ownerId', KeyType: 'HASH' },
+      { AttributeName: 'vendorId', KeyType: 'RANGE' },
+    ]);
     assert.equal(Table?.BillingModeSummary?.BillingMode, 'PAY_PER_REQUEST');
   });
 
@@ -106,9 +110,7 @@ describe('deployed stack', () => {
     const config = (await (await fetch(`${gateway.url}/config.json`)).json()) as Record<string, string>;
     assert.equal(config.userPoolId, outputs.UserPoolId);
     assert.equal(config.userPoolClientId, outputs.UserPoolClientId);
-    assert.equal(config.identityPoolId, outputs.IdentityPoolId);
     assert.equal(config.apiUrl, '/api');
-    assert.equal(config.apiSigningUrl, outputs.ApiEndpoint);
   });
 
   it('serves the site from the private bucket through CloudFront (origin access control)', async () => {
@@ -119,54 +121,53 @@ describe('deployed stack', () => {
   });
 
   for (const method of ['GET', 'POST', 'DELETE']) {
-    it(`rejects unsigned ${method} /api/vendors`, async () => {
+    it(`rejects ${method} /api/vendors without a token`, async () => {
       const response = await fetch(`${gateway.url}/api/vendors`, { method });
-      assert.equal(response.status, 403);
-      assert.match(await response.text(), /Missing Authentication Token/);
+      assert.equal(response.status, 401);
     });
   }
 
-  it('rejects a request signed with the wrong secret key', async () => {
-    const headers = await signedHeaders(outputs, { accessKeyId: 'ASIAFAKE', secretAccessKey: 'wrong' }, 'GET', 'api/vendors');
-    const response = await fetch(`${gateway.url}/api/vendors`, { headers });
-    assert.equal(response.status, 403);
+  it('rejects a forged token', async () => {
+    const forged = `${Buffer.from('{"alg":"none"}').toString('base64url')}.${Buffer.from('{"sub":"x"}').toString('base64url')}.`;
+    const response = await fetch(`${gateway.url}/api/vendors`, { headers: { Authorization: forged } });
+    assert.equal(response.status, 401);
   });
 
-  it('blocks a signed request that skips CloudFront (no origin secret)', async () => {
+  it('blocks a signed-in request that skips CloudFront (no origin secret)', async () => {
     const email = await createUser(cognito, outputs, 'direct');
     try {
-      const credentials = await credentialsFor(outputs, await idTokenFor(cognito, outputs, email));
       const api = new URL(outputs.ApiEndpoint);
       const response = await send({
         host: api.host,
         path: `${api.pathname}api/vendors`,
-        headers: await signedHeaders(outputs, credentials, 'GET', 'api/vendors'),
+        headers: { Authorization: await idTokenFor(cognito, outputs, email) },
       });
       assert.equal(response.status, 403);
-      assert.match(response.body, /Forbidden/, 'blocked by the WAF web ACL, before IAM auth');
+      assert.match(response.body, /Forbidden/, 'blocked by the WAF web ACL, before the authorizer');
     } finally {
       await deleteUser(cognito, outputs, email);
     }
   });
 
   it('lets CloudFront through to the API (it adds the origin secret)', async () => {
-    // Unsigned, so IAM auth answers; a WAF block would say "Forbidden" instead.
+    // No token, so the Cognito authorizer answers 401; a WAF block would be 403.
     const response = await send({ url: distributionUrl(outputs, '/api/vendors') });
-    assert.equal(response.status, 403);
-    assert.match(response.body, /Missing Authentication Token/);
+    assert.equal(response.status, 401);
   });
+
+  /** Calls /api/vendors through the gateway with the user's ID token. */
+  const caller = (token: string) => (method: string, body?: unknown) =>
+    fetch(`${gateway.url}/api/vendors`, {
+      method,
+      headers: { Authorization: token, 'Content-Type': 'application/json' },
+      ...(body !== undefined && { body: JSON.stringify(body) }),
+    });
 
   it('creates, lists and deletes a vendor for a signed-in user', async () => {
     const email = await createUser(cognito, outputs, 'smoke');
     try {
-      const credentials = await credentialsFor(outputs, await idTokenFor(cognito, outputs, email));
-      const url = `${gateway.url}/api/vendors`;
+      const call = caller(await idTokenFor(cognito, outputs, email));
       const name = `Smoke ${email}`;
-      const call = async (method: string, body?: unknown) => {
-        const payload = body === undefined ? undefined : JSON.stringify(body);
-        const headers = await signedHeaders(outputs, credentials, method, 'api/vendors', payload);
-        return fetch(url, { method, headers: { ...headers, 'Content-Type': 'application/json' }, body: payload });
-      };
 
       const created = await call('POST', { name, category: 'Smoke', contactEmail: email });
       assert.equal(created.status, 201);
@@ -187,6 +188,30 @@ describe('deployed stack', () => {
       assert.ok(!remaining.some((vendor) => vendor.vendorId === vendorId));
     } finally {
       await deleteUser(cognito, outputs, email);
+    }
+  });
+
+  it("shows each user only their own vendors, and won't delete another user's", async () => {
+    const alice = await createUser(cognito, outputs, 'alice');
+    const bob = await createUser(cognito, outputs, 'bob');
+    try {
+      const asAlice = caller(await idTokenFor(cognito, outputs, alice));
+      const asBob = caller(await idTokenFor(cognito, outputs, bob));
+      const created = await asAlice('POST', { name: `Alice's vendor`, category: 'Private', contactEmail: alice });
+      const { vendorId } = (await created.json()) as { vendorId: string };
+
+      const bobsList = (await (await asBob('GET')).json()) as { vendorId: string }[];
+      assert.deepEqual(bobsList, [], "Bob sees none of Alice's vendors");
+
+      assert.equal((await asBob('DELETE', { vendorId })).status, 200, 'answers like a delete of a missing vendor');
+      const alicesList = (await (await asAlice('GET')).json()) as { vendorId: string; name: string }[];
+      assert.deepEqual(alicesList.map((vendor) => vendor.vendorId), [vendorId], "Bob's delete did nothing");
+      assert.ok(!('ownerId' in alicesList[0]!), 'the owner is not returned');
+
+      await asAlice('DELETE', { vendorId });
+    } finally {
+      await deleteUser(cognito, outputs, alice);
+      await deleteUser(cognito, outputs, bob);
     }
   });
 });
