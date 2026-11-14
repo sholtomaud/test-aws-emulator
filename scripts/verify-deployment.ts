@@ -52,7 +52,13 @@ const cloudformation = new CloudFormationClient({});
 const { Stacks } = await cloudformation.send(new DescribeStacksCommand({ StackName: stackName }));
 cloudformation.destroy();
 const outputs = Object.fromEntries((Stacks?.[0]?.Outputs ?? []).map((o) => [o.OutputKey, o.OutputValue])) as Record<string, string>;
-const site = outputs.CloudFrontURL!.replace(/\/+$/, '');
+// The emulator gives each distribution its own random port (CloudFrontURL),
+// which a container runtime does not publish; it also serves every
+// distribution on its main port under /_aws/cloudfront/<id>/.
+const onEmulator = Boolean(emulator && local(emulator.hostname));
+const site = onEmulator
+  ? `${emulator!.origin}/_aws/cloudfront/${outputs.DistributionId}`
+  : outputs.CloudFrontURL!.replace(/\/+$/, '');
 const api = outputs.ApiEndpoint!;
 
 const checks: [string, () => Promise<void>][] = [
@@ -60,7 +66,7 @@ const checks: [string, () => Promise<void>][] = [
     'the site loads through CloudFront',
     async () => {
       // AWS Emulator ignores DefaultRootObject (aws/aws-emulator#160), so ask it for the file.
-      const page = await get(`${site}${local(new URL(site).hostname) ? '/index.html' : '/'}`);
+      const page = await get(`${site}${onEmulator ? '/index.html' : '/'}`);
       assert.equal(page.status, 200);
       assert.match(page.body, /<vendor-app>/);
     },

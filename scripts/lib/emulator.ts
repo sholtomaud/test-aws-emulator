@@ -13,7 +13,18 @@ export interface StackOutputs {
   TableName: string;
   SiteBucketName: string;
   CloudFrontURL: string;
+  DistributionId: string;
 }
+
+/**
+ * The URL of `path` on the deployed CloudFront distribution, through the
+ * emulator's own endpoint. The emulator gives each distribution a listener on
+ * a random port of its own (the CloudFrontURL output), which a container
+ * runtime does not publish; it also serves every distribution on its main
+ * port under the reserved path /_aws/cloudfront/<distribution id>/.
+ */
+export const distributionUrl = (outputs: Pick<StackOutputs, 'DistributionId'>, path: string): string =>
+  `${emulatorEndpoint().origin}/_aws/cloudfront/${outputs.DistributionId}${path}`;
 
 /**
  * Returns the emulator endpoint, and throws unless AWS_ENDPOINT_URL points at

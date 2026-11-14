@@ -266,5 +266,6 @@ export class VendorStack extends Stack {
     new CfnOutput(this, 'IdentityPoolId', { value: identityPool.identityPoolId });
     new CfnOutput(this, 'OriginSecretArn', { value: originSecret.secretArn });
     new CfnOutput(this, 'CloudFrontURL', { value: `https://${distribution.distributionDomainName}` });
+    new CfnOutput(this, 'DistributionId', { value: distribution.distributionId });
   }
 }

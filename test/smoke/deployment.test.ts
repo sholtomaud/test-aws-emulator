@@ -9,18 +9,18 @@ import { after, before, describe, it } from 'node:test';
 import { CognitoIdentityProviderClient } from '@aws-sdk/client-cognito-identity-provider';
 import { DescribeTableCommand, DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
-import { emulatorEndpoint, stackOutputs } from '../../scripts/lib/emulator.ts';
+import { distributionUrl, emulatorEndpoint, stackOutputs } from '../../scripts/lib/emulator.ts';
 import type { StackOutputs } from '../../scripts/lib/emulator.ts';
 import { startGateway } from '../../scripts/local-gateway.ts';
 import type { Gateway } from '../../scripts/local-gateway.ts';
 import { createUser, credentialsFor, deleteUser, idTokenFor, signedHeaders } from '../helpers/users.ts';
 
 /**
- * A request to the emulator's endpoint. `host` picks the service it reaches
- * (an API Gateway stage, or a CloudFront distribution's own port via `url`).
+ * A request to the emulator's endpoint: to `url`, or to `path` with a `host`
+ * header that picks the service (such as an API Gateway stage).
  */
 const send = (
-  options: { url?: string; host?: string; path: string; method?: string; headers?: Record<string, string>; body?: string },
+  options: { url?: string; host?: string; path?: string; method?: string; headers?: Record<string, string>; body?: string },
 ): Promise<{ status: number; body: string }> => {
   const url = new URL(options.url ?? emulatorEndpoint().href);
   return new Promise((resolve, reject) => {
@@ -28,7 +28,7 @@ const send = (
       {
         hostname: url.hostname,
         port: url.port,
-        path: options.path,
+        path: options.path ?? url.pathname + url.search,
         method: options.method ?? 'GET',
         // The emulator's certificate is for localhost.
         servername: 'localhost',
@@ -64,7 +64,7 @@ describe('deployed stack', () => {
   });
 
   it('has every stack output', () => {
-    for (const key of ['ApiEndpoint', 'UserPoolId', 'UserPoolClientId', 'IdentityPoolId', 'OriginSecretArn', 'TableName', 'SiteBucketName', 'CloudFrontURL'] as const) {
+    for (const key of ['ApiEndpoint', 'UserPoolId', 'UserPoolClientId', 'IdentityPoolId', 'OriginSecretArn', 'TableName', 'SiteBucketName', 'CloudFrontURL', 'DistributionId'] as const) {
       assert.ok(outputs[key], `missing output ${key}`);
     }
     assert.match(outputs.ApiEndpoint, /^https:\/\/[a-z0-9]+\.execute-api\.[a-z0-9-]+\.amazonaws\.com\/prod\/$/);
@@ -113,7 +113,7 @@ describe('deployed stack', () => {
 
   it('serves the site from the private bucket through CloudFront (origin access control)', async () => {
     // The emulator's CloudFront ignores DefaultRootObject, so ask for the file.
-    const page = await send({ url: outputs.CloudFrontURL, path: '/index.html' });
+    const page = await send({ url: distributionUrl(outputs, '/index.html') });
     assert.equal(page.status, 200);
     assert.match(page.body, /<vendor-app>/);
   });
@@ -151,7 +151,7 @@ describe('deployed stack', () => {
 
   it('lets CloudFront through to the API (it adds the origin secret)', async () => {
     // Unsigned, so IAM auth answers; a WAF block would say "Forbidden" instead.
-    const response = await send({ url: outputs.CloudFrontURL, path: '/api/vendors' });
+    const response = await send({ url: distributionUrl(outputs, '/api/vendors') });
     assert.equal(response.status, 403);
     assert.match(response.body, /Missing Authentication Token/);
   });

@@ -201,7 +201,10 @@ browser reaches CloudFront and Cognito by DNS name. Locally,
 
 The emulator's CloudFront does serve traffic, and the smoke tests check that
 the site comes from the private bucket through it and that it gets past the
-WAF to the API. But it drops the `Authorization` header, so signed requests go
+WAF to the API. They reach the distribution through the emulator's main port,
+at `/_aws/cloudfront/<distribution id>/`: each distribution also gets a
+listener on a random port of its own (the `CloudFrontURL` output), but a
+container runtime publishes only the main port. But it drops the `Authorization` header, so signed requests go
 through the local gateway instead.
 
 The frontend reads its API URLs and Cognito IDs from `config.json` at

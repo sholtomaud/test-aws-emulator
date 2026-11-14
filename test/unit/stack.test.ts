@@ -179,7 +179,7 @@ describe('VendorStack', () => {
   });
 
   it('exports the values the frontend and tests need', () => {
-    for (const output of ['ApiEndpoint', 'UserPoolId', 'UserPoolClientId', 'IdentityPoolId', 'OriginSecretArn', 'TableName', 'SiteBucketName', 'CloudFrontURL']) {
+    for (const output of ['ApiEndpoint', 'UserPoolId', 'UserPoolClientId', 'IdentityPoolId', 'OriginSecretArn', 'TableName', 'SiteBucketName', 'CloudFrontURL', 'DistributionId']) {
       template.hasOutput(output, {});
     }
   });
