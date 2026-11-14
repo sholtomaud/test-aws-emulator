@@ -387,3 +387,9 @@ infra/github-deploy-*.ts one-time per-account roles for the GitHub Actions deplo
 .github/workflows/       CI (ci.yml), and the deploy chain (deploy.yml, deploy-stage.yml)
 test/{unit,functional,smoke,e2e}/
 ```
+
+## License
+
+[MIT](LICENSE). The app is based on freeCodeCamp's
+[full-stack AWS tutorial](https://www.freecodecamp.org/news/full-stack-aws-react-lambda-dynamodb-tutorial/)
+(see "Differences from the tutorial").
