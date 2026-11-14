@@ -1,6 +1,7 @@
 node_modules/
 dist/
 cdk.out/
+cdk.out.github/
 .emulator/
 *.log
 .cache/

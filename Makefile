@@ -166,16 +166,33 @@ report: node_modules ## Print the test and emulator report (appended to the GitH
 
 # ---- AWS ---------------------------------------------------------------------
 
+# STAGE=dev|test|uat|prod deploys VendorStack-<stage> (prod keeps its data);
+# without it, VendorStack. The deploy workflow (.github/workflows/deploy.yml)
+# runs the same commands.
+STAGE_CONTEXT = $(if $(STAGE),--context stage=$(STAGE))
+STACK_NAME = VendorStack$(if $(STAGE),-$(STAGE))
+
 .PHONY: aws-deploy
-aws-deploy: build ## Deploy to a real AWS account (uses your AWS credentials)
-	$(CDK) deploy
+aws-deploy: build ## Deploy to a real AWS account (uses your AWS credentials): make aws-deploy [STAGE=dev]
+	$(CDK) deploy $(STACK_NAME) $(STAGE_CONTEXT)
+
+.PHONY: aws-verify
+aws-verify: node_modules ## Check a deployed stack through CloudFront: make aws-verify [STAGE=dev]
+	STACK_NAME=$(STACK_NAME) node scripts/verify-deployment.ts
 
 .PHONY: aws-destroy
-aws-destroy: ## Remove the stack from the real AWS account
-	$(CDK) destroy
+aws-destroy: ## Remove the stack from the real AWS account: make aws-destroy [STAGE=dev]
+	$(CDK) destroy $(STACK_NAME) $(STAGE_CONTEXT)
+
+.PHONY: aws-github-setup
+aws-github-setup: node_modules ## One-time, per account: roles for the deploy workflow: make aws-github-setup REPOSITORY=owner/name ENVIRONMENTS=dev,test [OIDC_PROVIDER_ARN=...]
+	@test -n "$(REPOSITORY)" -a -n "$(ENVIRONMENTS)" || { echo "usage: make aws-github-setup REPOSITORY=owner/name ENVIRONMENTS=dev,test"; exit 1; }
+	$(CDK) --app 'node infra/github-deploy-app.ts' --output cdk.out.github deploy \
+	  --context repository=$(REPOSITORY) --context environments=$(ENVIRONMENTS) \
+	  $(if $(OIDC_PROVIDER_ARN),--context oidcProviderArn=$(OIDC_PROVIDER_ARN))
 
 .PHONY: clean
 clean: ## Remove build output
-	rm -rf dist cdk.out .emulator reports/*.xml
+	rm -rf dist cdk.out cdk.out.github .emulator reports/*.xml
 
 endif

@@ -11,11 +11,12 @@ signed-in users add, view and delete vendors (name, category, contact email).
 | Piece | Implementation |
 | --- | --- |
 | Frontend | Native web components in TypeScript (no framework), bundled with esbuild |
-| Auth | Amazon Cognito user pool, called directly with `fetch` |
-| API | API Gateway REST API with a Cognito authorizer: `GET`/`POST`/`DELETE /vendors` |
-| Logic | Three Lambda functions (Node.js 22) |
+| Auth | Amazon Cognito user pool for sign-in, and an identity pool that swaps the ID token for temporary AWS credentials; both called directly with `fetch` |
+| API | API Gateway REST API with IAM auth: `GET`/`POST`/`DELETE /api/vendors`, signed in the browser with SigV4 (Web Crypto, no SDK) |
+| Logic | Three Lambda functions (Node.js 26) |
 | Data | DynamoDB table keyed by `vendorId` |
-| Hosting | Private S3 bucket behind CloudFront |
+| Hosting | Private S3 bucket behind CloudFront (origin access control); the API on the same distribution under `/api/*` |
+| Edge protection | The API answers only CloudFront: CloudFront adds a secret header (generated in Secrets Manager) and a WAF web ACL on the stage blocks requests without it |
 | Infrastructure | AWS CDK, in TypeScript |
 
 All TypeScript outside the browser runs **natively in Node.js** (type
@@ -147,7 +148,7 @@ All suites use Node's built-in test runner.
 | Suite | Command | Needs | What it covers |
 | --- | --- | --- | --- |
 | Unit | `make test-unit` | nothing | Lambda logic with a fake DynamoDB client; the frontend's API and auth layers with a fake `fetch`; the synthesized CloudFormation template |
-| Functional | `make test-functional` | emulator | The Lambda handlers in-process against emulated DynamoDB; the frontend's Cognito client against an emulated user pool |
+| Functional | `make test-functional` | emulator | The Lambda handlers in-process against emulated DynamoDB; the frontend's Cognito client against an emulated user pool and identity pool |
 | Smoke | `make test-smoke` | emulator + `make deploy` | The deployed stack: outputs, table, site bucket, 401 without a token, one authenticated round trip through API Gateway, Lambda and DynamoDB |
 | End-to-end | `make test-e2e` | emulator + `make deploy` | Chromium (Playwright) drives the deployed web components: sign-up, confirmation, sign-in, add/reload/delete a vendor, sign-out, expired session, layout |
 
@@ -161,39 +162,80 @@ Scripts and tests refuse to run unless `AWS_ENDPOINT_URL` points at this
 machine, and `scripts/emulator.sh run` removes real AWS credentials from the
 environment, so a test run cannot reach AWS.
 
+## How requests are authorized
+
+1. The user signs in to the Cognito **user pool** (`USER_PASSWORD_AUTH`) and
+   gets an ID token.
+2. The app exchanges the token at the Cognito **identity pool**
+   (`GetId`, `GetCredentialsForIdentity`) for temporary credentials of the
+   pool's authenticated role. That role may call only `GET`, `POST` and
+   `DELETE` on `/api/vendors` (`execute-api:Invoke`).
+3. Every API request is signed with SigV4 (`src/frontend/lib/sigv4.ts`) and
+   sent to `/api/vendors` on the site's own origin. CloudFront forwards it to
+   the API Gateway stage, adding `X-Origin-Verify`. The signature is computed
+   for the host and path API Gateway receives
+   (`<id>.execute-api.<region>.amazonaws.com/prod/api/vendors`, from
+   `apiSigningUrl` in `config.json`), which is why it still verifies after
+   CloudFront.
+4. The stage's WAF web ACL blocks any request without the secret header, so
+   calling `execute-api` directly fails even with a valid signature. API
+   Gateway then checks the signature and the caller's IAM permissions.
+
+Because the API is same-origin, there is no CORS configuration. The API
+behavior's cache policy includes `Authorization`, `X-Amz-Date` and
+`X-Amz-Security-Token` (CloudFront forwards `Authorization` only when the cache
+policy names it) with a TTL of 0, so nothing is served from the cache.
+
 ## How the app reaches the emulator
 
 The emulator serves every AWS API on one local HTTPS endpoint. On AWS, a
-browser reaches CloudFront, API Gateway and Cognito by DNS name. Locally,
+browser reaches CloudFront and Cognito by DNS name. Locally,
 `scripts/local-gateway.ts` (`make serve`) stands in for those names:
 
 | Path | On AWS | Locally |
 | --- | --- | --- |
 | `/` | CloudFront in front of the site bucket | Objects read from the emulated site bucket; unknown paths get `index.html` |
-| `/api/*` | `https://<id>.execute-api.<region>.amazonaws.com/prod/*` | Forwarded to the emulator with that `Host` header |
+| `/api/*` | CloudFront → `https://<id>.execute-api.<region>.amazonaws.com/prod/api/*`, with `X-Origin-Verify` | Forwarded to the emulator with that `Host` header and the secret, read from emulated Secrets Manager |
 | `/cognito` | `https://cognito-idp.<region>.amazonaws.com/` | Forwarded to the emulator |
+| `/cognito-identity` | `https://cognito-identity.<region>.amazonaws.com/` | Forwarded to the emulator |
 
-The frontend reads its API URL and Cognito IDs from `config.json` at startup,
-so the same build runs in both places.
+The emulator's CloudFront does serve traffic, and the smoke tests check that
+the site comes from the private bucket through it and that it gets past the
+WAF to the API. They reach the distribution through the emulator's main port,
+at `/_aws/cloudfront/<distribution id>/`: each distribution also gets a
+listener on a random port of its own (the `CloudFrontURL` output), but a
+container runtime publishes only the main port. But it drops the `Authorization` header, so signed requests go
+through the local gateway instead.
+
+The frontend reads its API URLs and Cognito IDs from `config.json` at
+startup, so the same build runs in both places.
 
 ## Differences from AWS when deploying to the emulator
 
-Found with AWS Emulator 1.0.345. `make deploy` passes `--context emulator=true`
-to work around the first; the stack is otherwise the one deployed to AWS.
+Found with AWS Emulator 1.0.345 and rechecked with 1.0.353. `make deploy`
+passes `--context emulator=true` to work around the first; the stack is
+otherwise the one deployed to AWS. These and the other gaps found while
+testing (CodePipeline, CodeBuild, Lambda's bundled SDK, AgentCore payments)
+are written up, ready to file, in
+[`docs/emulator-issues.md`](docs/emulator-issues.md).
 
 - **Lambda-backed custom resources never complete.** The emulator invokes the
   function but the resource stays `CREATE_IN_PROGRESS`. In emulator mode the
   stack leaves out the `BucketDeployment` and S3 `autoDeleteObjects`, and
   `scripts/publish-site.ts` uploads the frontend instead.
 - **Lambda permission statement IDs are not truncated** to 100 characters as
-  CloudFormation does on AWS. The API's construct ID is kept short (`Api`) and
-  `allowTestInvoke` is off; a unit test guards the length.
+  CloudFormation does on AWS. The construct IDs of the API and its resources
+  are kept short (`Api`, `A`, `V`) and `allowTestInvoke` is off; a unit test
+  guards the length.
 - **The AWS SDK must come from the Lambda runtime.** Functions that bundle the
   SDK (`bundleAwsSDK`) fail with 502 in the emulator.
-- **CloudFront is control-plane only**: the distribution is created but serves
-  no traffic, hence the local gateway.
-- **CORS preflight is not exercised**: the emulator refuses requests carrying
-  a cross-site `Origin`, and the local gateway is same-origin.
+- **CloudFront custom origins need `HTTPPort` and `HTTPSPort`**, which are
+  optional on AWS. The stack sets them on the API origin.
+- **CloudFront drops the viewer's `Authorization` header** and ignores
+  `DefaultRootObject`, hence the local gateway (see above).
+- **The emulator does enforce IAM auth, IAM policies, API resource policies
+  and WAF rules**, although its documentation says policies are not
+  evaluated. Don't rely on that for security testing.
 
 ## Differences from the tutorial
 
@@ -203,18 +245,74 @@ to work around the first; the stack is otherwise the one deployed to AWS.
 - `config.json` at runtime replaces build-time `NEXT_PUBLIC_*` variables.
 - `createVendor` validates its input and answers 400 instead of 500.
 - `getVendors` follows DynamoDB pagination.
-- Node.js 22 Lambda runtime, and `S3BucketOrigin` with origin access control
+- Node.js 26 Lambda runtime, and `S3BucketOrigin` with origin access control
   in place of the deprecated `S3Origin`.
 
 ## Deploying to AWS
 
+Deploying creates billable resources in your AWS account.
+
+### From your machine
+
 ```bash
-npx cdk bootstrap   # once per account and region
-make aws-deploy
+npx cdk bootstrap        # once per account and region
+make aws-deploy          # or STAGE=dev make aws-deploy for VendorStack-dev
+make aws-verify          # checks the deployment through CloudFront
+make aws-destroy         # removes it (prod keeps its table, user pool and bucket)
 ```
 
-This uses your own AWS credentials and creates billable resources.
-`make aws-destroy` removes them.
+### From GitHub Actions
+
+`.github/workflows/deploy.yml` runs after CI passes on `main` and promotes the
+same commit through four GitHub environments: **dev → test → uat → prod**.
+Each deploy shows the `cdk diff` in the job summary, deploys
+`VendorStack-<environment>` and runs `scripts/verify-deployment.ts`, which
+checks that:
+
+- the site loads through CloudFront;
+- CloudFront reaches the API;
+- calling the API directly is blocked.
+
+You can also run it by hand (Actions → Deploy → Run workflow) to deploy one
+environment from `main`.
+
+The workflow holds no AWS keys. Each job exchanges GitHub's OIDC token for an
+IAM role that only this repository's jobs in that GitHub environment can
+assume. No AWS CodeConnections connection is needed; that is only for
+CodePipeline.
+
+`prod` keeps its data: the table (with point-in-time recovery), user pool and
+site bucket are retained if the stack is deleted, and have deletion
+protection. The other stages delete everything with the stack.
+
+#### One-time setup
+
+1. **AWS accounts.** One account per environment is recommended (AWS
+   Organizations); stages can also share an account, since every resource
+   name includes the stage.
+2. **In each account**, with administrator credentials for it:
+
+   ```bash
+   npx cdk bootstrap
+   make aws-github-setup REPOSITORY=owner/name ENVIRONMENTS=dev   # the environments this account hosts, e.g. dev,test
+   ```
+
+   This creates GitHub's OIDC identity provider and a role
+   `vendor-tracker-deploy-<environment>` per environment. The role can only
+   assume the CDK bootstrap roles and read its stack. If the account already
+   has a GitHub OIDC provider, add `OIDC_PROVIDER_ARN=arn:aws:iam::...`. The
+   stack's `DeployRoleArn-<environment>` outputs are the role ARNs.
+3. **In GitHub** (Settings → Environments), create `dev`, `test`, `uat` and
+   `prod`. In each:
+   - **Variables:** `AWS_DEPLOY_ROLE_ARN` (from step 2) and `AWS_REGION`.
+   - **Deployment branches and tags:** selected branches, `main` only.
+   - **Required reviewers** on `test`, `uat` and `prod`, so the promotion
+     waits for an approval before each. Turn on **Prevent self-review** for
+     `prod`.
+
+Reviewers approve before the job runs, so the change summary for an
+environment appears after approval; the dev run's summary shows the same
+commit's diff against dev.
 
 ## Layout
 
@@ -223,11 +321,15 @@ Containerfile            AWS Emulator image, and the dev image (emulator + Node.
 Makefile                 every task
 infra/                   CDK app and stack
 src/lambda/              Lambda handlers
-src/frontend/            web components, API and auth clients
+src/frontend/            web components, API and auth clients, SigV4 signer
+docs/emulator-issues.md  emulator differences from AWS, written up for its issue tracker
 scripts/dev-container.sh runs the toolchain in the dev container (macOS)
 scripts/emulator.sh      emulator lifecycle for each runtime
-scripts/local-gateway.ts local stand-in for CloudFront, API Gateway and Cognito DNS names
+scripts/local-gateway.ts local stand-in for CloudFront and Cognito DNS names
 scripts/publish-site.ts  uploads the frontend to the emulated site bucket
 scripts/ci-report.ts     test and emulator report for the job summary
+scripts/verify-deployment.ts  post-deploy check of a deployed stack, through CloudFront
+infra/github-deploy-*.ts one-time per-account roles for the GitHub Actions deploy workflow
+.github/workflows/       CI (ci.yml), and the deploy chain (deploy.yml, deploy-stage.yml)
 test/{unit,functional,smoke,e2e}/
 ```

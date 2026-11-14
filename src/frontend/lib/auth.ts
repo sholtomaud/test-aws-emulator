@@ -1,13 +1,18 @@
-// Minimal Amazon Cognito user pool client for the browser. It calls the
-// Cognito API directly with fetch (these operations need no AWS signature),
+// Minimal Amazon Cognito client for the browser. It signs users in to the user
+// pool, then swaps their ID token for temporary AWS credentials from the
+// identity pool, which sign the API requests (IAM auth). It calls both
+// Cognito APIs directly with fetch (these operations need no AWS signature),
 // so the app needs no auth library.
 import type { AppConfig } from './config.ts';
+import type { Credentials } from './sigv4.ts';
 
 export interface Session {
   email: string;
-  /** The JWT that API Gateway's Cognito authorizer checks. */
+  /** The user pool ID token, exchanged for `credentials`. */
   idToken: string;
-  /** Epoch milliseconds. */
+  /** Temporary credentials of the identity pool's authenticated role. */
+  credentials: Credentials;
+  /** Epoch milliseconds: the sooner of the token's and the credentials' expiry. */
   expiresAt: number;
 }
 
@@ -21,32 +26,42 @@ export class AuthError extends Error {
   }
 }
 
-type AuthConfig = Pick<AppConfig, 'region' | 'userPoolClientId' | 'cognitoEndpoint'>;
+type AuthConfig = Pick<
+  AppConfig,
+  'region' | 'userPoolId' | 'userPoolClientId' | 'identityPoolId' | 'cognitoEndpoint' | 'identityEndpoint'
+>;
 type SessionStore = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
 const STORAGE_KEY = 'vendor-tracker.session';
 
 export class CognitoAuth {
   #endpoint: string;
+  #identityEndpoint: string;
   #clientId: string;
+  #identityPoolId: string;
+  #provider: string;
   #fetch: typeof fetch;
   #store: SessionStore;
 
   constructor(config: AuthConfig, deps: { fetch?: typeof fetch; store?: SessionStore } = {}) {
     this.#endpoint = config.cognitoEndpoint ?? `https://cognito-idp.${config.region}.amazonaws.com/`;
+    this.#identityEndpoint = config.identityEndpoint ?? `https://cognito-identity.${config.region}.amazonaws.com/`;
     this.#clientId = config.userPoolClientId;
+    this.#identityPoolId = config.identityPoolId;
+    this.#provider = `cognito-idp.${config.region}.amazonaws.com/${config.userPoolId}`;
     this.#fetch = deps.fetch ?? ((...args) => fetch(...args));
     this.#store = deps.store ?? sessionStorage;
   }
 
-  async #call(operation: string, body: Record<string, unknown>): Promise<Record<string, any>> {
-    const response = await this.#fetch(this.#endpoint, {
+  #call(operation: string, body: Record<string, unknown>): Promise<Record<string, any>> {
+    return this.#post(this.#endpoint, `AWSCognitoIdentityProviderService.${operation}`, { ClientId: this.#clientId, ...body });
+  }
+
+  async #post(url: string, target: string, body: Record<string, unknown>): Promise<Record<string, any>> {
+    const response = await this.#fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-amz-json-1.1',
-        'X-Amz-Target': `AWSCognitoIdentityProviderService.${operation}`,
-      },
-      body: JSON.stringify({ ClientId: this.#clientId, ...body }),
+      headers: { 'Content-Type': 'application/x-amz-json-1.1', 'X-Amz-Target': target },
+      body: JSON.stringify(body),
     });
     const data = (await response.json().catch(() => ({}))) as Record<string, any>;
     if (!response.ok) {
@@ -83,13 +98,36 @@ export class CognitoAuth {
     if (!result?.IdToken) {
       throw new AuthError('UnsupportedChallenge', `Sign-in needs an extra step this app does not support (${data.ChallengeName ?? 'unknown'}).`);
     }
+    const idToken: string = result.IdToken;
+    const { credentials, expiresAt } = await this.#credentialsFor(idToken);
     const session: Session = {
       email,
-      idToken: result.IdToken,
-      expiresAt: Date.now() + Number(result.ExpiresIn ?? 3600) * 1000,
+      idToken,
+      credentials,
+      expiresAt: Math.min(Date.now() + Number(result.ExpiresIn ?? 3600) * 1000, expiresAt),
     };
     this.#store.setItem(STORAGE_KEY, JSON.stringify(session));
     return session;
+  }
+
+  /** Exchanges an ID token for the identity pool's temporary credentials. */
+  async #credentialsFor(idToken: string): Promise<{ credentials: Credentials; expiresAt: number }> {
+    const Logins = { [this.#provider]: idToken };
+    const { IdentityId } = await this.#post(this.#identityEndpoint, 'AWSCognitoIdentityService.GetId', {
+      IdentityPoolId: this.#identityPoolId,
+      Logins,
+    });
+    const { Credentials: issued } = await this.#post(
+      this.#identityEndpoint,
+      'AWSCognitoIdentityService.GetCredentialsForIdentity',
+      { IdentityId, Logins },
+    );
+    if (!issued?.AccessKeyId) throw new AuthError('NoCredentials', 'Sign-in did not return AWS credentials.');
+    return {
+      credentials: { accessKeyId: issued.AccessKeyId, secretAccessKey: issued.SecretKey, sessionToken: issued.SessionToken },
+      // Expiration is epoch seconds.
+      expiresAt: Number(issued.Expiration) * 1000,
+    };
   }
 
   signOut(): void {
@@ -100,7 +138,7 @@ export class CognitoAuth {
   session(): Session | undefined {
     try {
       const session = JSON.parse(this.#store.getItem(STORAGE_KEY) ?? 'null') as Session | null;
-      if (session?.idToken && session.expiresAt > Date.now()) return session;
+      if (session?.credentials?.accessKeyId && session.expiresAt > Date.now()) return session;
     } catch {
       // Corrupt stored value: treat as signed out.
     }

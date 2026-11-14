@@ -16,15 +16,11 @@ export interface Vendor {
 export type Db = Pick<DynamoDBDocumentClient, 'send'>;
 type Event = Pick<APIGatewayProxyEvent, 'body'>;
 
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-  'Access-Control-Allow-Methods': 'OPTIONS,POST,GET,DELETE',
-};
-
+// No CORS headers: the browser calls the API on the site's own origin
+// (CloudFront forwards /api/* to API Gateway).
 const json = (statusCode: number, body: unknown): APIGatewayProxyResult => ({
   statusCode,
-  headers: { ...CORS, 'Content-Type': 'application/json' },
+  headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(body),
 });
 
