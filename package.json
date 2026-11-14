@@ -2,6 +2,7 @@
   "name": "vendor-tracker",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Vendor Tracker: native web components + Lambda + DynamoDB + Cognito, deployed with AWS CDK and tested against AWS Emulator",
   "type": "module",
   "engines": {
@@ -31,6 +32,7 @@
     "@types/node": "^22.20.5",
     "aws-cdk": "^2.1148.1",
     "aws-cdk-lib": "^2.277.0",
+    "cdk-nag": "^3.0.2",
     "constructs": "^10.8.1",
     "esbuild": "^0.28.2",
     "playwright": "1.63.0",

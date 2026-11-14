@@ -53,7 +53,7 @@ export class AuthPanel extends HTMLElement {
                  </div>
                  <div class="field">
                    <label for="password">Password</label>
-                   <input id="password" name="password" type="password" minlength="8" required
+                   <input id="password" name="password" type="password" minlength="12" required
                      autocomplete="${mode === 'sign-up' ? 'new-password' : 'current-password'}" />
                  </div>`
           }
