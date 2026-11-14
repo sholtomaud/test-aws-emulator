@@ -3,16 +3,16 @@
 //
 //   /            CloudFront: serves the site bucket (default root object, and
 //                index.html for unknown paths, like the distribution's 404 rule)
-//   /api/*       CloudFront's /api/* behavior: forwards the signed request to
-//                the API Gateway stage (routed to the emulator by Host header)
-//                and adds the X-Origin-Verify secret, as CloudFront does
+//   /api/*       CloudFront's /api/* behavior: forwards the request, with the
+//                user's ID token, to the API Gateway stage (routed to the
+//                emulator by Host header) and adds the X-Origin-Verify secret,
+//                as CloudFront does
 //   /cognito     the Cognito user pool endpoint
-//   /cognito-identity  the Cognito identity pool endpoint
-//   /config.json the deployed config, with the two Cognito URLs above swapped in
+//   /config.json the deployed config, with the Cognito URL above swapped in
 //
 // The emulator's CloudFront does serve /api/*, but it drops the Authorization
 // header (AWS forwards it when the cache policy includes it, as this stack's
-// does), so signed requests cannot go through it locally.
+// does), so authenticated requests cannot go through it locally.
 //
 // Everything is fetched from the emulator on each request; nothing is read
 // from the working tree, so this serves exactly what was deployed.
@@ -101,7 +101,7 @@ export const startGateway = async ({ port = 8080 }: { port?: number } = {}): Pro
 
     if (url.pathname.startsWith('/api/')) {
       // Like the distribution's API origin: the stage path is prepended, so
-      // API Gateway sees /prod/api/..., the path the browser signed. Only pass
+      // API Gateway sees /prod/api/.... Only pass
       // on what the API reads. Browser headers such as Origin are left out:
       // the emulator refuses requests that look cross-site.
       const header = (name: string) => req.headers[name] as string | undefined;
@@ -113,8 +113,6 @@ export const startGateway = async ({ port = 8080 }: { port?: number } = {}): Pro
           host: api.host,
           headers: {
             authorization: header('authorization'),
-            'x-amz-date': header('x-amz-date'),
-            'x-amz-security-token': header('x-amz-security-token'),
             'content-type': header('content-type'),
             [ORIGIN_VERIFY_HEADER.toLowerCase()]: originSecret,
           },
@@ -123,7 +121,7 @@ export const startGateway = async ({ port = 8080 }: { port?: number } = {}): Pro
       );
     }
 
-    if ((url.pathname === '/cognito' || url.pathname === '/cognito-identity') && method === 'POST') {
+    if (url.pathname === '/cognito' && method === 'POST') {
       return forward(
         res,
         {
@@ -147,7 +145,7 @@ export const startGateway = async ({ port = 8080 }: { port?: number } = {}): Pro
       const object = await s3.send(new GetObjectCommand({ Bucket: outputs.SiteBucketName, Key: 'config.json' }));
       const config = JSON.parse(await object.Body!.transformToString());
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-      res.end(JSON.stringify({ ...config, cognitoEndpoint: '/cognito', identityEndpoint: '/cognito-identity' }));
+      res.end(JSON.stringify({ ...config, cognitoEndpoint: '/cognito' }));
       return;
     }
 

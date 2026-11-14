@@ -8,9 +8,7 @@ import {
   aws_cloudfront as cloudfront,
   aws_cloudfront_origins as origins,
   aws_cognito as cognito,
-  aws_cognito_identitypool as identitypool,
   aws_dynamodb as dynamodb,
-  aws_iam as iam,
   aws_lambda as lambda,
   aws_lambda_nodejs as nodejs,
   aws_s3 as s3,
@@ -53,9 +51,11 @@ export class VendorStack extends Stack {
     // Data survives a stack deletion only where it matters (production).
     const dataRemoval = props.retainData ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY;
 
-    // 1. DynamoDB table
+    // 1. DynamoDB table. Each user's vendors are one partition: the owner (the
+    //    user's Cognito `sub`) is the partition key, the vendor id the sort key.
     const vendorTable = new dynamodb.Table(this, 'VendorTable', {
-      partitionKey: { name: 'vendorId', type: dynamodb.AttributeType.STRING },
+      partitionKey: { name: 'ownerId', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'vendorId', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: dataRemoval,
       ...(props.retainData && {
@@ -103,19 +103,9 @@ export class VendorStack extends Stack {
       authFlows: { userPassword: true, userSrp: true },
     });
 
-    // 5. Identity pool: swaps a signed-in user's ID token for temporary AWS
-    //    credentials of the authenticated role, which the browser uses to sign
-    //    its API requests (SigV4).
-    const identityPool = new identitypool.IdentityPool(this, 'VendorIdentityPool', {
-      allowUnauthenticatedIdentities: false,
-      authenticationProviders: {
-        userPools: [new identitypool.UserPoolAuthenticationProvider({ userPool, userPoolClient })],
-      },
-    });
-
-    // 6. API Gateway with IAM auth. Every method needs a SigV4 signature from
-    //    a principal allowed to call it: here, the identity pool's
-    //    authenticated role, and only on the vendor routes.
+    // 5. API Gateway with a Cognito user pool authorizer: every method needs a
+    //    valid ID token from this user pool in the Authorization header, and
+    //    the Lambdas get its claims (the `sub` scopes each user's vendors).
     //
     // Keep the construct id ('Api') short and allowTestInvoke off. AWS Emulator
     // 1.0.x uses "<stack>-<logical id>-<suffix>" as the Lambda permission
@@ -125,7 +115,10 @@ export class VendorStack extends Stack {
     // No CORS: the browser reaches the API through CloudFront, on the site's
     // own origin, under /api/*.
     const api = new apigateway.RestApi(this, 'Api', { restApiName: 'Vendor Service' });
-    const authOptions = { authorizationType: apigateway.AuthorizationType.IAM };
+    const authorizer = new apigateway.CognitoUserPoolsAuthorizer(this, 'VendorAuthorizer', {
+      cognitoUserPools: [userPool],
+    });
+    const authOptions = { authorizer, authorizationType: apigateway.AuthorizationType.COGNITO };
     const integration = (handler: lambda.IFunction) =>
       new apigateway.LambdaIntegration(handler, { allowTestInvoke: false });
     // Short construct ids ('A', 'V') for the same reason as 'Api' above: the
@@ -139,16 +132,8 @@ export class VendorStack extends Stack {
     ] as const) {
       vendors.addMethod(method, integration(handler), authOptions);
     }
-    identityPool.authenticatedRole.addToPrincipalPolicy(
-      new iam.PolicyStatement({
-        actions: ['execute-api:Invoke'],
-        resources: ['GET', 'POST', 'DELETE'].map((method) =>
-          api.arnForExecuteApi(method, '/api/vendors', api.deploymentStage.stageName),
-        ),
-      }),
-    );
 
-    // 7. Only CloudFront may call the API. API Gateway has no origin access
+    // 6. Only CloudFront may call the API. API Gateway has no origin access
     //    control, so CloudFront adds a secret header to every request it sends
     //    to the API, and a WAF web ACL on the stage blocks requests without it.
     //    The secret is generated in Secrets Manager and resolved by
@@ -190,24 +175,25 @@ export class VendorStack extends Stack {
       webAclArn: apiAcl.attrArn,
     });
 
-    // 8. S3 bucket for the frontend files (private)
+    // 7. S3 bucket for the frontend files (private)
     const siteBucket = new s3.Bucket(this, 'VendorSiteBucket', {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       removalPolicy: dataRemoval,
       autoDeleteObjects: !props.emulator && !props.retainData,
     });
 
-    // 9. CloudFront distribution: the site from S3 (origin access control),
+    // 8. CloudFront distribution: the site from S3 (origin access control),
     //    and /api/* from API Gateway. CloudFront forwards the Authorization
-    //    header only when it is part of the cache key, so the API behavior
-    //    keys on the SigV4 headers with a TTL of zero: every signed request is
-    //    unique, so nothing is served from the cache.
+    //    header (the ID token) only when it is part of the cache key, so the
+    //    API behavior keys on it, which also keeps one user's responses from
+    //    ever being served to another. The TTL is zero (API Gateway's
+    //    responses carry no caching headers), so nothing is cached at all.
     const apiCachePolicy = new cloudfront.CachePolicy(this, 'ApiCachePolicy', {
-      comment: 'Vendor API: forward SigV4 headers, never serve from cache',
+      comment: 'Vendor API: forward the Authorization header, never serve from cache',
       defaultTtl: Duration.seconds(0),
       minTtl: Duration.seconds(0),
       maxTtl: Duration.seconds(1),
-      headerBehavior: cloudfront.CacheHeaderBehavior.allowList('Authorization', 'X-Amz-Date', 'X-Amz-Security-Token'),
+      headerBehavior: cloudfront.CacheHeaderBehavior.allowList('Authorization'),
       queryStringBehavior: cloudfront.CacheQueryStringBehavior.all(),
       cookieBehavior: cloudfront.CacheCookieBehavior.none(),
     });
@@ -235,15 +221,13 @@ export class VendorStack extends Stack {
     cfnDistribution.addPropertyOverride('DistributionConfig.Origins.1.CustomOriginConfig.HTTPPort', 80);
     cfnDistribution.addPropertyOverride('DistributionConfig.Origins.1.CustomOriginConfig.HTTPSPort', 443);
 
-    // 10. Deploy the frontend, plus a config.json the app reads at startup, so
+    // 9. Deploy the frontend, plus a config.json the app reads at startup, so
     //    the frontend needs no rebuild when the backend's identifiers change.
     const appConfig = {
       apiUrl: '/api',
-      apiSigningUrl: api.url,
       region: this.region,
       userPoolId: userPool.userPoolId,
       userPoolClientId: userPoolClient.userPoolClientId,
-      identityPoolId: identityPool.identityPoolId,
     };
     if (!props.emulator) new s3deploy.BucketDeployment(this, 'DeployWebsite', {
       sources: [
@@ -257,13 +241,12 @@ export class VendorStack extends Stack {
       distributionPaths: ['/*'],
     });
 
-    // 11. Outputs
+    // 10. Outputs
     new CfnOutput(this, 'ApiEndpoint', { value: api.url });
     new CfnOutput(this, 'UserPoolId', { value: userPool.userPoolId });
     new CfnOutput(this, 'UserPoolClientId', { value: userPoolClient.userPoolClientId });
     new CfnOutput(this, 'TableName', { value: vendorTable.tableName });
     new CfnOutput(this, 'SiteBucketName', { value: siteBucket.bucketName });
-    new CfnOutput(this, 'IdentityPoolId', { value: identityPool.identityPoolId });
     new CfnOutput(this, 'OriginSecretArn', { value: originSecret.secretArn });
     new CfnOutput(this, 'CloudFrontURL', { value: `https://${distribution.distributionDomainName}` });
     new CfnOutput(this, 'DistributionId', { value: distribution.distributionId });

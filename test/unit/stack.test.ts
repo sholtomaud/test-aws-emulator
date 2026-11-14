@@ -23,10 +23,16 @@ describe('VendorStack', () => {
     template = synth(false);
   });
 
-  it('creates an on-demand DynamoDB table keyed by vendorId', () => {
+  it("creates an on-demand DynamoDB table with one partition per user (ownerId, vendorId)", () => {
     template.hasResourceProperties('AWS::DynamoDB::Table', {
-      KeySchema: [{ AttributeName: 'vendorId', KeyType: 'HASH' }],
-      AttributeDefinitions: [{ AttributeName: 'vendorId', AttributeType: 'S' }],
+      KeySchema: [
+        { AttributeName: 'ownerId', KeyType: 'HASH' },
+        { AttributeName: 'vendorId', KeyType: 'RANGE' },
+      ],
+      AttributeDefinitions: Match.arrayWith([
+        { AttributeName: 'ownerId', AttributeType: 'S' },
+        { AttributeName: 'vendorId', AttributeType: 'S' },
+      ]),
       BillingMode: 'PAY_PER_REQUEST',
     });
   });
@@ -52,7 +58,7 @@ describe('VendorStack', () => {
       );
     };
     const reader = actionsFor('GetVendorsHandler');
-    assert.ok(reader.includes('dynamodb:Scan'));
+    assert.ok(reader.includes('dynamodb:Query'));
     assert.ok(!reader.some((action) => /Put|Delete|Update|Write/.test(action)), 'reader must not write');
     for (const writer of ['CreateVendorHandler', 'DeleteVendorHandler']) {
       const actions = actionsFor(writer);
@@ -61,12 +67,16 @@ describe('VendorStack', () => {
     }
   });
 
-  it('protects GET, POST and DELETE /api/vendors with IAM auth', () => {
-    template.resourceCountIs('AWS::ApiGateway::Authorizer', 0);
+  it('protects GET, POST and DELETE /api/vendors with the Cognito authorizer', () => {
+    template.resourceCountIs('AWS::ApiGateway::Authorizer', 1);
+    template.hasResourceProperties('AWS::ApiGateway::Authorizer', {
+      Type: 'COGNITO_USER_POOLS',
+      IdentitySource: 'method.request.header.Authorization',
+    });
     for (const HttpMethod of ['GET', 'POST', 'DELETE']) {
       template.hasResourceProperties('AWS::ApiGateway::Method', {
         HttpMethod,
-        AuthorizationType: 'AWS_IAM',
+        AuthorizationType: 'COGNITO_USER_POOLS',
         Integration: { Type: 'AWS_PROXY' },
       });
     }
@@ -77,24 +87,15 @@ describe('VendorStack', () => {
   it('has no unauthenticated methods and no CORS preflight (the API is same-origin)', () => {
     const methods = Object.values(template.findResources('AWS::ApiGateway::Method'));
     assert.equal(methods.length, 3);
-    for (const method of methods) assert.equal(method.Properties.AuthorizationType, 'AWS_IAM');
+    for (const method of methods) assert.equal(method.Properties.AuthorizationType, 'COGNITO_USER_POOLS');
   });
 
-  it('lets signed-in users, and only them, invoke the vendor routes', () => {
-    template.hasResourceProperties('AWS::Cognito::IdentityPool', {
-      AllowUnauthenticatedIdentities: false,
-      CognitoIdentityProviders: [Match.objectLike({ ProviderName: Match.anyValue(), ClientId: Match.anyValue() })],
-    });
-    template.hasResourceProperties('AWS::Cognito::IdentityPoolRoleAttachment', {
-      Roles: { authenticated: Match.anyValue() },
-    });
+  it('has no identity pool and no IAM permission to invoke the API', () => {
+    template.resourceCountIs('AWS::Cognito::IdentityPool', 0);
     const invoke = Object.values(template.findResources('AWS::IAM::Policy')).flatMap((policy) =>
       policy.Properties.PolicyDocument.Statement.filter((statement: { Action: string }) => statement.Action === 'execute-api:Invoke'),
     );
-    assert.equal(invoke.length, 1, 'one execute-api:Invoke statement, on the authenticated role');
-    const resources = JSON.stringify(invoke[0].Resource);
-    for (const method of ['GET', 'POST', 'DELETE']) assert.ok(resources.includes(`/${method}/api/vendors`), `${method} missing`);
-    assert.ok(!resources.includes('*/*'), 'no wildcard method or path');
+    assert.equal(invoke.length, 0);
   });
 
   it('blocks API requests that do not come through CloudFront', () => {
@@ -138,7 +139,7 @@ describe('VendorStack', () => {
         DefaultTTL: 0,
         MinTTL: 0,
         ParametersInCacheKeyAndForwardedToOrigin: Match.objectLike({
-          HeadersConfig: { HeaderBehavior: 'whitelist', Headers: ['Authorization', 'X-Amz-Date', 'X-Amz-Security-Token'] },
+          HeadersConfig: { HeaderBehavior: 'whitelist', Headers: ['Authorization'] },
         }),
       }),
     });
@@ -179,7 +180,7 @@ describe('VendorStack', () => {
   });
 
   it('exports the values the frontend and tests need', () => {
-    for (const output of ['ApiEndpoint', 'UserPoolId', 'UserPoolClientId', 'IdentityPoolId', 'OriginSecretArn', 'TableName', 'SiteBucketName', 'CloudFrontURL', 'DistributionId']) {
+    for (const output of ['ApiEndpoint', 'UserPoolId', 'UserPoolClientId', 'OriginSecretArn', 'TableName', 'SiteBucketName', 'CloudFrontURL', 'DistributionId']) {
       template.hasOutput(output, {});
     }
   });
@@ -204,7 +205,6 @@ describe('VendorStack for AWS Emulator', () => {
     template.resourceCountIs('AWS::Cognito::UserPool', 1);
     template.resourceCountIs('AWS::CloudFront::Distribution', 1);
     template.resourceCountIs('AWS::S3::Bucket', 1);
-    template.resourceCountIs('AWS::Cognito::IdentityPool', 1);
     template.resourceCountIs('AWS::WAFv2::WebACL', 1);
   });
 });
