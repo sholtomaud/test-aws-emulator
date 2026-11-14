@@ -8,6 +8,8 @@ export interface StackOutputs {
   ApiEndpoint: string;
   UserPoolId: string;
   UserPoolClientId: string;
+  IdentityPoolId: string;
+  OriginSecretArn: string;
   TableName: string;
   SiteBucketName: string;
   CloudFrontURL: string;

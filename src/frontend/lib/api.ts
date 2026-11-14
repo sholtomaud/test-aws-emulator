@@ -1,4 +1,8 @@
-// Service layer for the Vendor REST API.
+// Service layer for the Vendor REST API. Requests go to the site's own origin
+// (/api, which CloudFront forwards to API Gateway) and are signed with SigV4
+// for the API Gateway stage that receives them (IAM auth).
+import { signRequest } from './sigv4.ts';
+import type { Credentials } from './sigv4.ts';
 
 export interface Vendor {
   vendorId: string;
@@ -19,29 +23,54 @@ export class ApiError extends Error {
   }
 }
 
+export interface ApiOptions {
+  /** Where requests are sent, e.g. `/api`. */
+  baseUrl: string;
+  /** The API Gateway stage URL the requests are signed for. */
+  signingUrl: string;
+  region: string;
+  /** Returns the signed-in user's temporary AWS credentials. */
+  credentials: () => Credentials | undefined;
+  fetch?: typeof fetch;
+}
+
+const join = (base: string, path: string): string => `${base.replace(/\/+$/, '')}/${path}`;
+
 export class VendorApi {
   #url: string;
-  #token: () => string | undefined;
+  #signingUrl: string;
+  #region: string;
+  #credentials: () => Credentials | undefined;
   #fetch: typeof fetch;
 
-  /**
-   * @param baseUrl  API base URL (with or without a trailing slash)
-   * @param token    returns the signed-in user's ID token
-   */
-  constructor(baseUrl: string, token: () => string | undefined, fetchImpl?: typeof fetch) {
-    this.#url = `${baseUrl.replace(/\/+$/, '')}/vendors`;
-    this.#token = token;
-    this.#fetch = fetchImpl ?? ((...args) => fetch(...args));
+  constructor(options: ApiOptions) {
+    this.#url = join(options.baseUrl, 'vendors');
+    // API Gateway sees /<stage>/api/vendors: CloudFront adds the stage path.
+    this.#signingUrl = join(options.signingUrl, 'api/vendors');
+    this.#region = options.region;
+    this.#credentials = options.credentials;
+    this.#fetch = options.fetch ?? ((...args) => fetch(...args));
   }
 
   async #request(method: string, failure: string, body?: unknown): Promise<Response> {
-    const token = this.#token();
-    if (!token) throw new ApiError(401, 'No active session. Please sign in.');
+    const credentials = this.#credentials();
+    if (!credentials) throw new ApiError(401, 'No active session. Please sign in.');
+    const payload = body === undefined ? undefined : JSON.stringify(body);
+    const signature = await signRequest({
+      method,
+      url: this.#signingUrl,
+      body: payload,
+      credentials,
+      region: this.#region,
+      service: 'execute-api',
+    });
     const response = await this.#fetch(this.#url, {
       method,
-      headers: { Authorization: token, ...(body !== undefined && { 'Content-Type': 'application/json' }) },
-      ...(body !== undefined && { body: JSON.stringify(body) }),
+      headers: { ...signature, ...(payload !== undefined && { 'Content-Type': 'application/json' }) },
+      ...(payload !== undefined && { body: payload }),
     });
+    // IAM auth answers 403 for missing, expired or rejected credentials.
+    if (response.status === 401 || response.status === 403) throw new ApiError(401, 'Your session has expired. Please sign in again.');
     if (!response.ok) throw new ApiError(response.status, failure);
     return response;
   }

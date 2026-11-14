@@ -159,12 +159,11 @@ describe('deleteVendor', () => {
   });
 });
 
-describe('CORS', () => {
-  it('is present on success and error responses', async () => {
+describe('response headers', () => {
+  it('are JSON with no CORS headers: the API is same-origin behind CloudFront', async () => {
     const { db } = fakeDb();
     for (const result of [await getVendors(db), await deleteVendor(db, event({}))]) {
-      assert.equal(result.headers?.['Access-Control-Allow-Origin'], '*');
-      assert.equal(result.headers?.['Access-Control-Allow-Headers'], 'Content-Type,Authorization');
+      assert.deepEqual(result.headers, { 'Content-Type': 'application/json' });
     }
   });
 });

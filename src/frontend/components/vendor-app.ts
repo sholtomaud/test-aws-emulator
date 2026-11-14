@@ -19,7 +19,12 @@ export class VendorApp extends HTMLElement {
     try {
       const config = await loadConfig();
       this.#auth = new CognitoAuth(config);
-      this.#api = new VendorApi(config.apiUrl, () => this.#auth.session()?.idToken);
+      this.#api = new VendorApi({
+        baseUrl: config.apiUrl,
+        signingUrl: config.apiSigningUrl,
+        region: config.region,
+        credentials: () => this.#auth.session()?.credentials,
+      });
     } catch (error) {
       const root = render(this, 'main { max-width: 40rem; margin: 4rem auto; padding: 0 1rem; }', '<main><div role="alert"></div></main>');
       $(root, '[role=alert]').textContent = error instanceof Error ? error.message : 'Failed to start.';
