@@ -130,9 +130,13 @@ shell: ## Open a shell with AWS tools pointed at the emulator
 test-unit: node_modules ## Unit tests (no emulator)
 	npm run test:unit
 
+.PHONY: test-cdk
+test-cdk: node_modules ## Infrastructure tests: CDK assertions, cdk-nag checks, template snapshots (no emulator)
+	npm run test:cdk
+
 .PHONY: snapshots
-snapshots: node_modules ## Accept infrastructure changes: rewrite the template snapshots in test/unit/__snapshots__
-	UPDATE_SNAPSHOTS=1 node --test test/unit/snapshot.test.ts
+snapshots: node_modules ## Accept infrastructure changes: rewrite the template snapshots in test/cdk/__snapshots__
+	UPDATE_SNAPSHOTS=1 node --test test/cdk/snapshot.test.ts
 
 .PHONY: test-functional
 test-functional: node_modules ## Functional tests against the emulator's DynamoDB and Cognito
@@ -159,7 +163,7 @@ test-e2e: node_modules browser ## Browser end-to-end tests of the deployed app
 test-emulator: test-functional deploy test-smoke test-e2e ## Deploy, then run every emulator-backed suite
 
 .PHONY: test
-test: typecheck test-unit ## Everything: start the emulator, deploy, run all suites, stop
+test: typecheck test-unit test-cdk ## Everything: start the emulator, deploy, run all suites, stop
 	$(EMULATOR) build
 	$(EMULATOR) up
 	@trap '$(EMULATOR) down' EXIT; $(MAKE) --no-print-directory test-emulator

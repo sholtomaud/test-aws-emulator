@@ -30,7 +30,7 @@ const path = (relative: string): string => fileURLToPath(new URL(relative, impor
 /**
  * Records that a cdk-nag finding on `scope` is a deliberate choice, with the
  * reason. Each acknowledgement sits next to the resource it is about, and the
- * tests (test/unit/nag.test.ts) fail on any finding that has none.
+ * tests (test/cdk/nag.test.ts) fail on any finding that has none.
  */
 const acknowledge = (scope: IConstruct, findings: Record<string, string>): void => {
   for (const [id, reason] of Object.entries(findings)) Validations.of(scope).acknowledge({ id, reason });

@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   unit:
-    name: Typecheck and unit tests
+    name: Typecheck, unit and CDK tests
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -24,6 +24,11 @@ jobs:
       - run: npm ci
       - run: make typecheck
       - run: make test-unit
+      # CDK assertions, cdk-nag checks and template snapshots. Runs even when
+      # the unit tests fail, so the job summary always has both.
+      - name: CDK tests
+        if: ${{ !cancelled() }}
+        run: make test-cdk
       - name: Report to the job summary
         if: always()
         run: make report
