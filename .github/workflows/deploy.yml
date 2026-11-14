@@ -1,0 +1,85 @@
+# Deploys to AWS after CI passes on main, promoting the same commit through
+# dev -> test -> uat -> prod. Each step is a GitHub environment: give test,
+# uat and prod required reviewers, and the chain waits for their approval
+# before deploying there. See the README, "Deploying to AWS".
+#
+# Run it by hand (Actions > Deploy > Run workflow) to deploy one environment
+# from main, for example to redeploy prod after a fix to the environment.
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: The one environment to deploy
+        type: choice
+        options: [dev, test, uat, prod]
+        default: dev
+
+permissions:
+  contents: read
+  id-token: write
+
+# One deploy at a time, and never cancel one halfway through a stack update.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  commit:
+    name: Pick the commit
+    # A CI run that passed for a push to main, or a manual run from main.
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.pick.outputs.sha }}
+      promote: ${{ github.event_name == 'workflow_run' }}
+    steps:
+      - id: pick
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+  dev:
+    needs: commit
+    if: needs.commit.outputs.promote == 'true' || inputs.environment == 'dev'
+    uses: ./.github/workflows/deploy-stage.yml
+    with:
+      environment: dev
+      ref: ${{ needs.commit.outputs.sha }}
+
+  test:
+    needs: [commit, dev]
+    if: >-
+      always() && needs.commit.result == 'success' && (
+        (needs.commit.outputs.promote == 'true' && needs.dev.result == 'success') || inputs.environment == 'test')
+    uses: ./.github/workflows/deploy-stage.yml
+    with:
+      environment: test
+      ref: ${{ needs.commit.outputs.sha }}
+
+  uat:
+    needs: [commit, test]
+    if: >-
+      always() && needs.commit.result == 'success' && (
+        (needs.commit.outputs.promote == 'true' && needs.test.result == 'success') || inputs.environment == 'uat')
+    uses: ./.github/workflows/deploy-stage.yml
+    with:
+      environment: uat
+      ref: ${{ needs.commit.outputs.sha }}
+
+  prod:
+    needs: [commit, uat]
+    if: >-
+      always() && needs.commit.result == 'success' && (
+        (needs.commit.outputs.promote == 'true' && needs.uat.result == 'success') || inputs.environment == 'prod')
+    uses: ./.github/workflows/deploy-stage.yml
+    with:
+      environment: prod
+      ref: ${{ needs.commit.outputs.sha }}

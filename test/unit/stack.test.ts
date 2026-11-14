@@ -6,13 +6,15 @@ import { join } from 'node:path';
 import { before, describe, it } from 'node:test';
 import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
+import { GitHubDeployStack } from '../../infra/github-deploy-stack.ts';
 import { VendorStack } from '../../infra/vendor-stack.ts';
+import type { VendorStackProps } from '../../infra/vendor-stack.ts';
 
-const synth = (emulator: boolean): Template => {
+const synth = (emulator: boolean, props: VendorStackProps = {}): Template => {
   const frontendDir = mkdtempSync(join(tmpdir(), 'vendor-frontend-'));
   writeFileSync(join(frontendDir, 'index.html'), '<vendor-app></vendor-app>');
   const app = new App({ outdir: mkdtempSync(join(tmpdir(), 'vendor-cdk-')) });
-  return Template.fromStack(new VendorStack(app, 'VendorStack', { frontendDir, emulator }));
+  return Template.fromStack(new VendorStack(app, 'VendorStack', { frontendDir, emulator, ...props }));
 };
 
 describe('VendorStack', () => {
@@ -204,5 +206,75 @@ describe('VendorStack for AWS Emulator', () => {
     template.resourceCountIs('AWS::S3::Bucket', 1);
     template.resourceCountIs('AWS::Cognito::IdentityPool', 1);
     template.resourceCountIs('AWS::WAFv2::WebACL', 1);
+  });
+});
+
+describe('VendorStack stages', () => {
+  it('deletes data with the stack outside production', () => {
+    const template = synth(false, { stage: 'dev' });
+    template.hasResource('AWS::DynamoDB::Table', { DeletionPolicy: 'Delete' });
+    template.hasResource('AWS::Cognito::UserPool', { DeletionPolicy: 'Delete' });
+    template.resourceCountIs('Custom::S3AutoDeleteObjects', 1);
+  });
+
+  it('keeps and protects the data in production', () => {
+    const template = synth(false, { stage: 'prod', retainData: true });
+    template.hasResource('AWS::DynamoDB::Table', {
+      DeletionPolicy: 'Retain',
+      Properties: Match.objectLike({
+        DeletionProtectionEnabled: true,
+        PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true },
+      }),
+    });
+    template.hasResource('AWS::Cognito::UserPool', { DeletionPolicy: 'Retain', Properties: Match.objectLike({ DeletionProtection: 'ACTIVE' }) });
+    template.hasResource('AWS::S3::Bucket', { DeletionPolicy: 'Retain' });
+    template.resourceCountIs('Custom::S3AutoDeleteObjects', 0);
+  });
+
+  it('gives each stage its own Cognito domain, so stages can share an account', () => {
+    const domain = (template: Template) =>
+      JSON.stringify(Object.values(template.findResources('AWS::Cognito::UserPoolDomain'))[0]!.Properties.Domain);
+    assert.match(domain(synth(false, { stage: 'uat' })), /vendor-tracker-uat-/);
+    assert.match(domain(synth(false)), /"vendor-tracker-"/);
+  });
+});
+
+describe('GitHubDeployStack', () => {
+  const template = Template.fromStack(
+    new GitHubDeployStack(new App(), 'Deploy', { repository: 'octo/vendors', environments: ['dev', 'prod'] }),
+  );
+
+  it('trusts GitHub OIDC tokens only for this repository and each environment', () => {
+    template.resourceCountIs('AWS::IAM::OIDCProvider', 1);
+    for (const environment of ['dev', 'prod']) {
+      template.hasResourceProperties('AWS::IAM::Role', {
+        RoleName: `vendor-tracker-deploy-${environment}`,
+        AssumeRolePolicyDocument: {
+          Statement: [
+            Match.objectLike({
+              Action: 'sts:AssumeRoleWithWebIdentity',
+              Condition: {
+                StringEquals: {
+                  'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
+                  'token.actions.githubusercontent.com:sub': `repo:octo/vendors:environment:${environment}`,
+                },
+              },
+            }),
+          ],
+        },
+      });
+    }
+  });
+
+  it('lets the roles do nothing but assume the CDK bootstrap roles and read the stack', () => {
+    const actions = Object.values(template.findResources('AWS::IAM::Policy')).flatMap((policy) =>
+      policy.Properties.PolicyDocument.Statement.flatMap((statement: { Action: string | string[] }) => statement.Action),
+    );
+    assert.deepEqual([...new Set(actions)].sort(), ['cloudformation:DescribeStacks', 'sts:AssumeRole', 'sts:TagSession']);
+    assert.match(JSON.stringify(template.toJSON()), /role\/cdk-hnb659fds-\*-/);
+  });
+
+  it('refuses a malformed repository', () => {
+    assert.throws(() => new GitHubDeployStack(new App(), 'X', { repository: 'nope', environments: ['dev'] }), /owner\/name/);
   });
 });

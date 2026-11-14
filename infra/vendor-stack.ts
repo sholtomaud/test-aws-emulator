@@ -35,17 +35,33 @@ export interface VendorStackProps extends StackProps {
    * BucketDeployment; `scripts/publish-site.ts` uploads the frontend instead.
    */
   emulator?: boolean;
+  /**
+   * Deployment stage (dev, test, uat, prod): names the Cognito domain so
+   * several stages can share an account. Unset for a single deployment.
+   */
+  stage?: string;
+  /**
+   * Keep the table, user pool and site bucket when the stack is deleted, and
+   * turn on point-in-time recovery and deletion protection. For production.
+   */
+  retainData?: boolean;
 }
 
 export class VendorStack extends Stack {
   constructor(scope: Construct, id: string, props: VendorStackProps = {}) {
     super(scope, id, props);
+    // Data survives a stack deletion only where it matters (production).
+    const dataRemoval = props.retainData ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY;
 
     // 1. DynamoDB table
     const vendorTable = new dynamodb.Table(this, 'VendorTable', {
       partitionKey: { name: 'vendorId', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: RemovalPolicy.DESTROY, // development only
+      removalPolicy: dataRemoval,
+      ...(props.retainData && {
+        deletionProtection: true,
+        pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+      }),
     });
 
     // 2. Lambda functions (bundled with esbuild)
@@ -74,10 +90,12 @@ export class VendorStack extends Stack {
       signInAliases: { email: true },
       autoVerify: { email: true },
       userVerification: { emailStyle: cognito.VerificationEmailStyle.CODE },
-      removalPolicy: RemovalPolicy.DESTROY, // development only
+      removalPolicy: dataRemoval,
+      ...(props.retainData && { deletionProtection: true }),
     });
     userPool.addDomain('VendorUserPoolDomain', {
-      cognitoDomain: { domainPrefix: `vendor-tracker-${this.account}` },
+      // Globally unique: one per account, and per stage when stages share one.
+      cognitoDomain: { domainPrefix: ['vendor-tracker', props.stage, this.account].filter(Boolean).join('-') },
     });
     // The web components talk to Cognito directly (no Amplify), using the
     // USER_PASSWORD_AUTH flow over HTTPS.
@@ -138,7 +156,7 @@ export class VendorStack extends Stack {
     const originSecret = new secretsmanager.Secret(this, 'OriginVerifySecret', {
       description: 'Shared secret CloudFront sends to API Gateway in X-Origin-Verify',
       generateSecretString: { excludePunctuation: true, passwordLength: 48 },
-      removalPolicy: RemovalPolicy.DESTROY, // development only
+      removalPolicy: RemovalPolicy.DESTROY, // a new secret is generated if the stack is recreated
     });
     const originSecretValue = originSecret.secretValue.unsafeUnwrap();
     const visibility = (metricName: string) => ({
@@ -175,8 +193,8 @@ export class VendorStack extends Stack {
     // 8. S3 bucket for the frontend files (private)
     const siteBucket = new s3.Bucket(this, 'VendorSiteBucket', {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      removalPolicy: RemovalPolicy.DESTROY,
-      autoDeleteObjects: !props.emulator,
+      removalPolicy: dataRemoval,
+      autoDeleteObjects: !props.emulator && !props.retainData,
     });
 
     // 9. CloudFront distribution: the site from S3 (origin access control),

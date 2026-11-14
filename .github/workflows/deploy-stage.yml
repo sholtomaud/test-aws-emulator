@@ -1,0 +1,87 @@
+# Deploys one environment. Called by deploy.yml, once per environment.
+#
+# Each GitHub environment (Settings > Environments) holds:
+#   variables  AWS_DEPLOY_ROLE_ARN  the role from `make aws-github-setup`
+#              AWS_REGION           e.g. us-east-1
+#   rules      required reviewers, and "Selected branches: main" (see README)
+# There are no AWS keys: the job swaps GitHub's OIDC token for that role,
+# which only this repository's jobs in that environment can assume.
+name: Deploy stage
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: dev, test, uat or prod
+        required: true
+        type: string
+      ref:
+        description: The commit to deploy
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write # for the OIDC token
+
+jobs:
+  deploy:
+    name: ${{ inputs.environment }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60 # a new CloudFront distribution can take a while
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ steps.deploy.outputs.url }}
+    env:
+      STAGE: ${{ inputs.environment }}
+      STACK_NAME: VendorStack-${{ inputs.environment }}
+    steps:
+      - name: Check the environment's settings
+        env:
+          ROLE: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          REGION: ${{ vars.AWS_REGION }}
+        run: |
+          if [ -z "$ROLE" ] || [ -z "$REGION" ]; then
+            echo "::error::Set the variables AWS_DEPLOY_ROLE_ARN and AWS_REGION in the GitHub environment '$STAGE' (see the README, Deploying to AWS)."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: vendor-tracker-${{ inputs.environment }}-${{ github.run_id }}
+
+      - name: Build the frontend
+        run: node scripts/build-frontend.ts
+
+      - name: Show the changes
+        run: |
+          {
+            echo "## $STACK_NAME changes"
+            echo '```'
+            npx cdk diff "$STACK_NAME" --context "stage=$STAGE" 2>&1 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy
+        id: deploy
+        run: |
+          npx cdk deploy "$STACK_NAME" --context "stage=$STAGE" \
+            --require-approval never --outputs-file cdk-outputs.json
+          url=$(node -e "console.log(require('./cdk-outputs.json')[process.env.STACK_NAME].CloudFrontURL)")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Deployed $(git rev-parse --short HEAD) to $url" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify the deployment
+        run: node scripts/verify-deployment.ts | tee -a "$GITHUB_STEP_SUMMARY"

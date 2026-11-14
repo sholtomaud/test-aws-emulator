@@ -247,13 +247,69 @@ are written up, ready to file, in
 
 ## Deploying to AWS
 
+Deploying creates billable resources in your AWS account.
+
+### From your machine
+
 ```bash
-npx cdk bootstrap   # once per account and region
-make aws-deploy
+npx cdk bootstrap        # once per account and region
+make aws-deploy          # or STAGE=dev make aws-deploy for VendorStack-dev
+make aws-verify          # checks the deployment through CloudFront
+make aws-destroy         # removes it (prod keeps its table, user pool and bucket)
 ```
 
-This uses your own AWS credentials and creates billable resources.
-`make aws-destroy` removes them.
+### From GitHub Actions
+
+`.github/workflows/deploy.yml` runs after CI passes on `main` and promotes the
+same commit through four GitHub environments: **dev → test → uat → prod**.
+Each deploy shows the `cdk diff` in the job summary, deploys
+`VendorStack-<environment>` and runs `scripts/verify-deployment.ts`, which
+checks that:
+
+- the site loads through CloudFront;
+- CloudFront reaches the API;
+- calling the API directly is blocked.
+
+You can also run it by hand (Actions → Deploy → Run workflow) to deploy one
+environment from `main`.
+
+The workflow holds no AWS keys. Each job exchanges GitHub's OIDC token for an
+IAM role that only this repository's jobs in that GitHub environment can
+assume. No AWS CodeConnections connection is needed; that is only for
+CodePipeline.
+
+`prod` keeps its data: the table (with point-in-time recovery), user pool and
+site bucket are retained if the stack is deleted, and have deletion
+protection. The other stages delete everything with the stack.
+
+#### One-time setup
+
+1. **AWS accounts.** One account per environment is recommended (AWS
+   Organizations); stages can also share an account, since every resource
+   name includes the stage.
+2. **In each account**, with administrator credentials for it:
+
+   ```bash
+   npx cdk bootstrap
+   make aws-github-setup REPOSITORY=owner/name ENVIRONMENTS=dev   # the environments this account hosts, e.g. dev,test
+   ```
+
+   This creates GitHub's OIDC identity provider and a role
+   `vendor-tracker-deploy-<environment>` per environment. The role can only
+   assume the CDK bootstrap roles and read its stack. If the account already
+   has a GitHub OIDC provider, add `OIDC_PROVIDER_ARN=arn:aws:iam::...`. The
+   stack's `DeployRoleArn-<environment>` outputs are the role ARNs.
+3. **In GitHub** (Settings → Environments), create `dev`, `test`, `uat` and
+   `prod`. In each:
+   - **Variables:** `AWS_DEPLOY_ROLE_ARN` (from step 2) and `AWS_REGION`.
+   - **Deployment branches and tags:** selected branches, `main` only.
+   - **Required reviewers** on `test`, `uat` and `prod`, so the promotion
+     waits for an approval before each. Turn on **Prevent self-review** for
+     `prod`.
+
+Reviewers approve before the job runs, so the change summary for an
+environment appears after approval; the dev run's summary shows the same
+commit's diff against dev.
 
 ## Layout
 
@@ -269,5 +325,8 @@ scripts/emulator.sh      emulator lifecycle for each runtime
 scripts/local-gateway.ts local stand-in for CloudFront and Cognito DNS names
 scripts/publish-site.ts  uploads the frontend to the emulated site bucket
 scripts/ci-report.ts     test and emulator report for the job summary
+scripts/verify-deployment.ts  post-deploy check of a deployed stack, through CloudFront
+infra/github-deploy-*.ts one-time per-account roles for the GitHub Actions deploy workflow
+.github/workflows/       CI (ci.yml), and the deploy chain (deploy.yml, deploy-stage.yml)
 test/{unit,functional,smoke,e2e}/
 ```
