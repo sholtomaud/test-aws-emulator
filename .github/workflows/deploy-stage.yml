@@ -3,7 +3,17 @@
 # Each GitHub environment (Settings > Environments) holds:
 #   variables  AWS_DEPLOY_ROLE_ARN  the role from `make aws-github-setup`
 #              AWS_REGION           e.g. us-east-1
+#              DOMAIN_NAME          optional: the site's domain, e.g. dev.vendors.example.com
+#              HOSTED_ZONE_ID       with DOMAIN_NAME: its Route 53 zone, e.g. Z0123456789ABC
+#              HOSTED_ZONE_NAME       and the zone's name, e.g. example.com
+#              CERTIFICATE_ARN      with DOMAIN_NAME outside us-east-1: an ACM certificate
+#                                   in us-east-1 for it (README, "Custom domain")
 #   rules      required reviewers, and "Selected branches: main" (see README)
+#
+# The release runs as a CloudFormation change set: CDK prepares it, then
+# scripts/release.ts checks it (in uat and prod it refuses to replace or
+# delete the table or the user pool), executes it, and in uat and prod sets
+# the stack policy that refuses those changes from any tool.
 # There are no AWS keys: the job swaps GitHub's OIDC token for that role,
 # which only this repository's jobs in that environment can assume.
 name: Deploy stage
@@ -19,6 +29,11 @@ on:
         description: The commit to deploy
         required: true
         type: string
+      allow_data_replacement:
+        description: Let this release replace or delete the table or user pool in uat or prod (their data is lost)
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -35,6 +50,13 @@ jobs:
     env:
       STAGE: ${{ inputs.environment }}
       STACK_NAME: VendorStack-${{ inputs.environment }}
+      CHANGE_SET_NAME: release-${{ github.run_id }}-${{ github.run_attempt }}
+      PROTECT_DATA: ${{ inputs.environment == 'uat' || inputs.environment == 'prod' }}
+      ALLOW_DATA_REPLACEMENT: ${{ inputs.allow_data_replacement }}
+      DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+      HOSTED_ZONE_ID: ${{ vars.HOSTED_ZONE_ID }}
+      HOSTED_ZONE_NAME: ${{ vars.HOSTED_ZONE_NAME }}
+      CERTIFICATE_ARN: ${{ vars.CERTIFICATE_ARN }}
     steps:
       - name: Check the environment's settings
         env:
@@ -65,23 +87,31 @@ jobs:
       - name: Build the frontend
         run: node scripts/build-frontend.ts
 
-      - name: Show the changes
+      - name: Prepare the change set
         run: |
-          {
-            echo "## $STACK_NAME changes"
-            echo '```'
-            npx cdk diff "$STACK_NAME" --context "stage=$STAGE" 2>&1 || true
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          context=(--context "stage=$STAGE")
+          for pair in "domainName=$DOMAIN_NAME" "hostedZoneId=$HOSTED_ZONE_ID" \
+                      "hostedZoneName=$HOSTED_ZONE_NAME" "certificateArn=$CERTIFICATE_ARN"; do
+            if [ -n "${pair#*=}" ]; then context+=(--context "$pair"); fi
+          done
+          npx cdk deploy "$STACK_NAME" "${context[@]}" --require-approval never \
+            --method=prepare-change-set --change-set-name "$CHANGE_SET_NAME"
+
+      - name: Check the changes
+        run: node scripts/release.ts check
 
       - name: Deploy
         id: deploy
         run: |
-          npx cdk deploy "$STACK_NAME" --context "stage=$STAGE" \
-            --require-approval never --outputs-file cdk-outputs.json
-          url=$(node -e "console.log(require('./cdk-outputs.json')[process.env.STACK_NAME].CloudFrontURL)")
+          node scripts/release.ts execute
+          url=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='SiteURL'].OutputValue" --output text)
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Deployed $(git rev-parse --short HEAD) to $url" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Protect the data resources
+        if: env.PROTECT_DATA == 'true'
+        run: node scripts/release.ts protect
 
       - name: Verify the deployment
         run: node scripts/verify-deployment.ts | tee -a "$GITHUB_STEP_SUMMARY"

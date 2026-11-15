@@ -25,6 +25,14 @@ Already reported, so not repeated here (add a 👍 instead):
 - [aws/aws-emulator#3](https://github.com/aws/aws-emulator/issues/3): container
   support for compute services, which covers CodeBuild running only shell
   built-ins (`ls`, `mkdir`, `node`, `npm` exit 127).
+- [aws/aws-emulator#253](https://github.com/aws/aws-emulator/issues/253):
+  `AWS::CertificateManager::Certificate` with
+  `DomainValidationOptions.HostedZoneId` is refused, so CDK's
+  `CertificateValidation.fromDns(zone)` cannot deploy. (The ACM API itself
+  issues a certificate once its CNAME exists in emulated Route 53.)
+- [aws/aws-emulator#406](https://github.com/aws/aws-emulator/issues/406):
+  inline (`ZipFile`) Node.js code is stored as `index.mjs`, so CommonJS inline
+  handlers fail with "exports is not defined".
 
 | # | Title | Status |
 | --- | --- | --- |
@@ -37,6 +45,9 @@ Already reported, so not repeated here (add a 👍 instead):
 | 7 | API Gateway: a mapping template using $context.identity returns 500 | To file |
 | 8 | Bedrock AgentCore: CreatePaymentConnector returns 501, so no payment can be processed | To file |
 | 9 | CloudFront: an S3 origin with origin access control is refused by the bucket's aws:SecureTransport deny | To file |
+| 10 | Route 53: an alias record without EvaluateTargetHealth is rejected | To file |
+| 11 | CodeDeploy: a Lambda alias update ignores its deployment group (no deployment, no traffic shifting) | To file |
+| 12 | CloudFormation: a change set reports a DynamoDB key change as Replacement False, and the update fails | To file |
 
 ---
 
@@ -408,3 +419,115 @@ documentation pairs them), and serves the site on AWS.
 
 Workaround: leave the deny out when deploying to the emulator (this project
 sets `enforceSSL` only on AWS).
+
+---
+
+## 10. Route 53: an alias record without EvaluateTargetHealth is rejected
+
+**What happened**
+
+An `AWS::Route53::RecordSet` with an `AliasTarget` to a CloudFront
+distribution and no `EvaluateTargetHealth` fails to create:
+
+```
+Value null at 'changeBatch.changes.1.member.resourceRecordSet.aliasTarget.evaluateTargetHealth'
+failed to satisfy constraint: Member must not be null (Service: Route53, Status Code: 400)
+```
+
+**What you expected**
+
+`EvaluateTargetHealth` is optional in CloudFormation's `AliasTarget` and
+defaults to false (AWS CloudFormation User Guide, `AWS::Route53::RecordSet
+AliasTarget`). The AWS CDK's `ARecord`/`AaaaRecord` with `CloudFrontTarget`
+leave it out.
+
+**Steps to reproduce**
+
+Deploy `new route53.ARecord(stack, 'Alias', { zone, recordName: 'www', target:
+route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(distribution)) })`.
+
+**Impact and workaround**
+
+Workaround: `addPropertyOverride('AliasTarget.EvaluateTargetHealth', false)`.
+
+---
+
+## 11. CodeDeploy: a Lambda alias update ignores its deployment group (no deployment, no traffic shifting)
+
+**What happened**
+
+A stack has a Lambda function, a `live` alias on its current version, and a
+CodeDeploy `LambdaDeploymentGroup` for the alias (CDK adds the alias's
+`UpdatePolicy.CodeDeployLambdaAliasUpdate`), with
+`LambdaLinear10PercentEvery1Minute` and an alarm. Deploying a code change
+completes in seconds: the alias points at the new version at once,
+`RoutingConfig` stays empty, and `ListDeployments` for the group returns no
+deployment.
+
+**What you expected**
+
+With the update policy, CloudFormation hands the alias update to CodeDeploy,
+which creates a deployment, shifts traffic with the alias's `RoutingConfig`
+(10% more each minute here), watches the alarms, and rolls back if one fires
+(CloudFormation User Guide, `UpdatePolicy` attribute,
+`CodeDeployLambdaAliasUpdate`).
+
+**Steps to reproduce**
+
+```js
+const fn = new lambda.Function(stack, 'Fn', { runtime: lambda.Runtime.NODEJS_22_X, handler: 'index.handler',
+  code: lambda.Code.fromInline(`exports.handler = async () => ({ v: '${ver}' });`) });
+// (Invoking it fails on the emulator, aws/aws-emulator#406; the alias update is what matters here.)
+const alias = new lambda.Alias(stack, 'Live', { aliasName: 'live', version: fn.currentVersion });
+new codedeploy.LambdaDeploymentGroup(stack, 'Deploy', { alias,
+  deploymentConfig: codedeploy.LambdaDeploymentConfig.LINEAR_10PERCENT_EVERY_1MINUTE,
+  alarms: [new cloudwatch.Alarm(stack, 'Errors', { metric: alias.metricErrors(), threshold: 1, evaluationPeriods: 1 })] });
+// deploy with ver=1, then with ver=2; GetAlias and ListDeployments during the second deploy
+```
+
+**Impact and workaround**
+
+Gradual releases and their automatic rollback can't be tested locally. No
+workaround; the stack still deploys (as all-at-once).
+
+---
+
+## 12. CloudFormation: a change set reports a DynamoDB key change as Replacement False, and the update fails
+
+**What happened**
+
+For a stack with an `AWS::DynamoDB::Table` keyed by `id`, a change set whose
+template keys it by `pk` describes the change as `Modify`, `Replacement:
+False`. Updating the stack to that template fails:
+
+```
+UPDATE_FAILED | NotImplemented: this emulator does not change the properties of an existing
+AWS::DynamoDB::Table in place; the resource was left as it is.
+```
+
+**What you expected**
+
+`KeySchema` is a replacement property of `AWS::DynamoDB::Table` ("Update
+requires: Replacement"), so the change set reports `Replacement: True` and
+the update creates a new table, then deletes the old one. Release tooling
+reads `Replacement` to stop changes that would lose data; on the emulator it
+cannot see them.
+
+**Steps to reproduce**
+
+```js
+const tpl = (key) => JSON.stringify({ Resources: { T: { Type: 'AWS::DynamoDB::Table', Properties: { BillingMode: 'PAY_PER_REQUEST',
+  AttributeDefinitions: [{ AttributeName: key, AttributeType: 'S' }], KeySchema: [{ AttributeName: key, KeyType: 'HASH' }] } } } });
+await cf.send(new CreateStackCommand({ StackName: 'S', TemplateBody: tpl('id') }));
+await cf.send(new CreateChangeSetCommand({ StackName: 'S', ChangeSetName: 'c', TemplateBody: tpl('pk') }));
+// DescribeChangeSet: Modify T AWS::DynamoDB::Table Replacement=False
+await cf.send(new UpdateStackCommand({ StackName: 'S', TemplateBody: tpl('pk') }));
+// UPDATE_FAILED ... NotImplemented, then UPDATE_ROLLBACK_COMPLETE
+```
+
+**Impact and workaround**
+
+A replacement guard can only be tested with fixtures. (Related to
+[aws/aws-emulator#276](https://github.com/aws/aws-emulator/issues/276) and
+[#295](https://github.com/aws/aws-emulator/issues/295), required replacements
+of other resource types.)

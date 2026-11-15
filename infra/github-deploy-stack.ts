@@ -3,9 +3,10 @@
 // for a role that only that repository, running in the named GitHub
 // environment (dev, test, uat, prod), can assume.
 //
-// The role can do one thing: assume the CDK bootstrap roles
-// (cdk-hnb659fds-*), which perform the deployment. Plus DescribeStacks on the
-// vendor stacks, which the post-deploy check reads.
+// The role can assume the CDK bootstrap roles (cdk-hnb659fds-*), which publish
+// the assets and prepare the change set, and on its own environment's stack
+// only: describe it, check and execute the prepared change set, and set its
+// stack policy (scripts/release.ts).
 import { CfnOutput, Duration, Stack, Token, Validations, aws_iam as iam } from 'aws-cdk-lib';
 import type { StackProps } from 'aws-cdk-lib';
 import type { Construct } from 'constructs';
@@ -62,7 +63,15 @@ export class GitHubDeployStack extends Stack {
       );
       role.addToPolicy(
         new iam.PolicyStatement({
-          actions: ['cloudformation:DescribeStacks'],
+          // Read the stack and run the release (scripts/release.ts): check and
+          // execute the change set CDK prepared, set the prod stack policy.
+          actions: [
+            'cloudformation:DescribeStacks',
+            'cloudformation:DescribeChangeSet',
+            'cloudformation:ExecuteChangeSet',
+            'cloudformation:GetStackPolicy',
+            'cloudformation:SetStackPolicy',
+          ],
           resources: [`arn:${this.partition}:cloudformation:*:${this.account}:stack/VendorStack-${environment}/*`],
         }),
       );
@@ -72,7 +81,7 @@ export class GitHubDeployStack extends Stack {
       });
       Validations.of(role).acknowledge({
         id: `AwsSolutions-IAM5[Resource::arn:<AWS::Partition>:cloudformation:*:${account}:stack/VendorStack-${environment}/*]`,
-        reason: "Read-only DescribeStacks on this environment's stack; the trailing wildcard is the stack's id suffix.",
+        reason: "Only this environment's stack (describe it, run its prepared change set, set its stack policy); the trailing wildcard is the stack's id suffix.",
       });
       new CfnOutput(this, `DeployRoleArn-${environment}`, {
         value: role.roleArn,

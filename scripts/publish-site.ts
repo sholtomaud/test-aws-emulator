@@ -18,6 +18,9 @@ const CONTENT_TYPES: Record<string, string> = {
 const dist = fileURLToPath(new URL('../dist/frontend/', import.meta.url));
 const outputs = await stackOutputs();
 const s3 = new S3Client({});
+// The same caching as the stack's two BucketDeployments: content-hashed
+// assets for a year, the page and its config never.
+const cacheControl = (Key: string) => (Key.startsWith('assets/') ? 'public, max-age=31536000, immutable' : 'no-cache');
 const put = (Key: string, Body: Buffer | string) =>
   s3.send(
     new PutObjectCommand({
@@ -25,14 +28,16 @@ const put = (Key: string, Body: Buffer | string) =>
       Key,
       Body,
       ContentType: CONTENT_TYPES[extname(Key)] ?? 'application/octet-stream',
+      CacheControl: cacheControl(Key),
     }),
   );
 
-const files = (await readdir(dist, { recursive: true, withFileTypes: true })).filter((entry) => entry.isFile());
-for (const file of files) {
-  const path = join(file.parentPath, file.name);
-  await put(relative(dist, path).split(sep).join('/'), await readFile(path));
-}
+// Assets first, then the page, as on AWS. Old assets are never deleted.
+const files = (await readdir(dist, { recursive: true, withFileTypes: true }))
+  .filter((entry) => entry.isFile())
+  .map((file) => relative(dist, join(file.parentPath, file.name)).split(sep).join('/'))
+  .sort((a, b) => Number(b.startsWith('assets/')) - Number(a.startsWith('assets/')));
+for (const key of files) await put(key, await readFile(join(dist, key)));
 // Same content the stack's BucketDeployment writes on AWS.
 await put(
   'config.json',

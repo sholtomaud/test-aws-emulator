@@ -286,6 +286,18 @@ are written up, ready to file, in
 - **The emulator does enforce WAF rules, IAM policies and API resource
   policies**, although its documentation says policies are not evaluated.
   Don't rely on that for security testing.
+- **Releases are not gradual.** The CodeDeploy deployment groups deploy, but
+  the emulator moves each `live` alias to the new version at once, without a
+  CodeDeploy deployment, so the canary and its alarms are only exercised on AWS.
+- **Change sets report every replacement as `False`**, and the emulator cannot
+  change a table's keys in place at all. The release guard's decisions are
+  therefore unit-tested on AWS-shaped change sets; its calls (check, execute,
+  stack policy) are tested against the emulator.
+- **No custom domain.** The emulator issues ACM certificates once their DNS
+  record exists in emulated Route 53, but not CloudFormation's automatic
+  validation (`DomainValidationOptions.HostedZoneId`), so emulator deploys use
+  the CloudFront name. Alias records also need `EvaluateTargetHealth` set,
+  which the stack does.
 
 ## Differences from the tutorial
 
@@ -362,6 +374,67 @@ protection. The other stages delete everything with the stack.
      waits for an approval before each. Turn on **Prevent self-review** for
      `prod`.
 
+### Releases without downtime
+
+Every deploy runs the same way, and nothing serving traffic is replaced
+abruptly:
+
+- **Lambda: gradual, with automatic rollback.** API Gateway calls each
+  function's `live` alias. A release publishes new versions and CodeDeploy
+  moves the aliases: in uat and prod 10% of requests for five minutes, then the
+  rest; in dev and test all at once. If the function's errors or throttles, or
+  the API's 5xx, raise an alarm during the release, CodeDeploy moves the aliases
+  back and the deploy fails.
+- **Frontend: old and new side by side.** The build names the script and
+  stylesheet after their content (`assets/app-<hash>.js`). They are uploaded
+  first, cached for a year and never deleted, so a page loaded before the
+  release keeps working; then `index.html` and `config.json` are replaced,
+  uncached, and only they are invalidated in CloudFront.
+- **Data resources are guarded.** CDK prepares a change set and
+  `scripts/release.ts` reviews it before anything runs: the job summary lists
+  every change, and in uat and prod a change that would replace or delete the
+  vendor table or the user pool (losing its data) stops the release. In uat and
+  prod the stack also gets a CloudFormation stack policy that refuses those
+  changes from any tool, `make aws-deploy` included. If such a change is
+  intended (the data is migrated or backed up), run the Deploy workflow by hand
+  for that environment with **allow data replacement**: the policy is lifted
+  for that one release and set again after it.
+
+Changes still need to be backward compatible for the few minutes both versions
+run: the API must accept requests from the previous frontend, and data changes
+are made in steps (add a field as optional, backfill, then require it).
+
+Sessions survive releases: the API keeps no session state. A signed-in user's
+session is the Cognito ID token in the browser (`sessionStorage`, valid for an
+hour), checked on each request, so a release signs nobody out. What would is
+replacing the user pool or its app client, which the guard above catches for
+the pool.
+
+### Custom domain
+
+Each environment can serve the site on its own domain, with an ACM certificate
+and a TLS 1.2 minimum. Set these variables on the GitHub environment (or pass
+them to `make aws-deploy` as `--context`):
+
+| Variable | Context | |
+| --- | --- | --- |
+| `DOMAIN_NAME` | `domainName` | e.g. `dev.vendors.example.com` |
+| `HOSTED_ZONE_ID`, `HOSTED_ZONE_NAME` | `hostedZoneId`, `hostedZoneName` | The Route 53 public hosted zone the domain is in. The stack adds its A and AAAA alias records. |
+| `CERTIFICATE_ARN` | `certificateArn` | An ACM certificate in **us-east-1** for the domain. |
+
+CloudFront only uses certificates from us-east-1, so:
+
+- **The stack is in us-east-1 and DNS is in Route 53:** give the domain and the
+  zone; the stack requests the certificate and validates it through the zone.
+- **The stack is in another region, or DNS is elsewhere:** request the
+  certificate in us-east-1 once (ACM console, DNS validation) and give its ARN.
+  With a zone the stack adds the records; without one, add a CNAME from the
+  domain to the distribution's `CloudFrontURL` yourself.
+
+The stack refuses at synth time a domain outside its zone, a certificate outside
+us-east-1, or a domain with neither a zone nor a certificate. The `SiteURL`
+output is the address users reach.
+
 #### Rotating the origin secret
 
 CloudFormation copies the `X-Origin-Verify` secret into the distribution and
@@ -393,6 +466,7 @@ scripts/local-gateway.ts local stand-in for CloudFront and Cognito DNS names
 scripts/publish-site.ts  uploads the frontend to the emulated site bucket
 scripts/ci-report.ts     test and emulator report for the job summary
 scripts/verify-deployment.ts  post-deploy check of a deployed stack, through CloudFront
+scripts/release.ts       release guard: checks and executes the change set, sets the stack policy
 infra/github-deploy-*.ts one-time per-account roles for the GitHub Actions deploy workflow
 .github/workflows/       CI (ci.yml), and the deploy chain (deploy.yml, deploy-stage.yml)
 test/{unit,functional,smoke,e2e}/
