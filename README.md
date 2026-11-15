@@ -467,6 +467,7 @@ scripts/publish-site.ts  uploads the frontend to the emulated site bucket
 scripts/ci-report.ts     test and emulator report for the job summary
 scripts/verify-deployment.ts  post-deploy check of a deployed stack, through CloudFront
 scripts/release.ts       release guard: checks and executes the change set, sets the stack policy
+scripts/file-emulator-issues.sh  files docs/emulator-issues.md on aws/aws-emulator with gh (dry run by default)
 infra/github-deploy-*.ts one-time per-account roles for the GitHub Actions deploy workflow
 .github/workflows/       CI (ci.yml), and the deploy chain (deploy.yml, deploy-stage.yml)
 test/{unit,functional,smoke,e2e}/
