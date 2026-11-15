@@ -173,6 +173,13 @@ describe('VendorStack', () => {
         CustomErrorResponses: [{ ErrorCode: 404, ResponseCode: 200, ResponsePagePath: '/index.html' }],
       },
     });
+    // CloudFront may list the bucket, so S3 answers 404 (not 403) for the
+    // app's client-side routes and the error response above applies.
+    const statements = Object.values(template.findResources('AWS::S3::BucketPolicy')).flatMap(
+      (policy) => policy.Properties.PolicyDocument.Statement as { Action: string | string[]; Principal: { Service?: string } }[],
+    );
+    const cloudFrontActions = statements.filter((statement) => statement.Principal.Service === 'cloudfront.amazonaws.com').flatMap((statement) => statement.Action);
+    assert.deepEqual(cloudFrontActions.sort(), ['s3:GetObject', 's3:ListBucket']);
   });
 
   it('deploys the content-hashed assets first, cached for a year and never deleted', () => {

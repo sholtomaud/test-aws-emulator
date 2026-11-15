@@ -1,0 +1,17 @@
+<main>
+  <header>
+    <div>
+      <h1>Vendor Tracker</h1>
+      <p class="muted">Manage your vendors, stored in AWS DynamoDB.</p>
+    </div>
+    <div class="account">
+      <p id="user" class="muted"></p>
+      <button id="sign-out" class="link" type="button">Sign out</button>
+    </div>
+  </header>
+  <div role="alert" hidden></div>
+  <div class="panels">
+    <vendor-form></vendor-form>
+    <vendor-list aria-busy="true"></vendor-list>
+  </div>
+</main>

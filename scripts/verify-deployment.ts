@@ -68,7 +68,7 @@ const checks: [string, () => Promise<void>][] = [
       // AWS Emulator ignores DefaultRootObject (aws/aws-emulator#160), so ask it for the file.
       const page = await get(`${site}${onEmulator ? '/index.html' : '/'}`);
       assert.equal(page.status, 200);
-      assert.match(page.body, /<vendor-app>/);
+      assert.match(page.body, /id="router-outlet"/);
     },
   ],
   [

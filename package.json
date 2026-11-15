@@ -3,14 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
-  "description": "Vendor Tracker: native web components + Lambda + DynamoDB + Cognito, deployed with AWS CDK and tested against AWS Emulator",
+  "description": "Vendor Tracker: Boba web components + Lambda + DynamoDB + Cognito, deployed with AWS CDK and tested against AWS Emulator",
   "type": "module",
   "engines": {
     "node": ">=22.18"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "node scripts/build-frontend.ts",
+    "dev": "vite --host",
+    "build": "vite build",
     "test:unit": "node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=reports/unit.xml \"test/unit/**/*.test.ts\"",
     "test:cdk": "node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=reports/cdk.xml \"test/cdk/**/*.test.ts\"",
     "test:functional": "node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=reports/functional.xml \"test/functional/**/*.test.ts\"",
@@ -37,6 +38,7 @@
     "constructs": "^10.8.1",
     "esbuild": "^0.28.2",
     "playwright": "1.63.0",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
   }
 }

@@ -74,7 +74,7 @@ install: node_modules ## Install dependencies
 
 .PHONY: build
 build: node_modules ## Build the frontend into dist/frontend
-	node scripts/build-frontend.ts
+	npm run build
 
 .PHONY: typecheck
 typecheck: node_modules ## Type-check all TypeScript

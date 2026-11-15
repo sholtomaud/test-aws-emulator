@@ -1,0 +1,26 @@
+:host {
+  display: block;
+}
+:host .card {
+  max-width: 24rem;
+  margin: 4rem auto;
+  padding: 1.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+:host fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+:host .switch {
+  margin-top: 1rem;
+  font-size: 0.875rem;
+  text-align: center;
+}
+:host .notice {
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+}

@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import {
+  Annotations,
   CfnOutput,
   Duration,
   RemovalPolicy,
@@ -440,7 +441,12 @@ export class VendorStack extends Stack {
         minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
       }),
       defaultBehavior: {
-        origin: origins.S3BucketOrigin.withOriginAccessControl(siteBucket),
+        // List access makes S3 answer 404, not 403, for a path that is not a
+        // file, so the error response below serves the app for its client-side
+        // routes (/sign-in). The default root object keeps "/" from listing.
+        origin: origins.S3BucketOrigin.withOriginAccessControl(siteBucket, {
+          originAccessLevels: [cloudfront.AccessLevel.READ, cloudfront.AccessLevel.LIST],
+        }),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       },
       additionalBehaviors: {
@@ -455,6 +461,10 @@ export class VendorStack extends Stack {
       defaultRootObject: 'index.html',
       errorResponses: [{ httpStatus: 404, responseHttpStatus: 200, responsePagePath: '/index.html' }],
     });
+    Annotations.of(distribution).acknowledgeWarning(
+      '@aws-cdk/aws-cloudfront-origins:listBucketSecurityRisk',
+      'defaultRootObject is set, so a request for "/" gets index.html, not a listing of the bucket.',
+    );
     // HTTPPort and HTTPSPort are optional in CloudFormation (defaults 80 and
     // 443), but AWS Emulator 1.0.x rejects a custom origin without them.
     // RestApiOrigin has no option for them, hence the overrides. Origin 1 is the API.
@@ -495,7 +505,7 @@ export class VendorStack extends Stack {
     };
     if (!props.emulator) {
       // Two steps, so a release never breaks a page that is open or loading:
-      // first the content-hashed assets (assets/app-<hash>.js, ...), cached
+      // first the content-hashed assets (assets/index-<hash>.js, ...), cached
       // for a year and never deleted, so pages of earlier releases keep
       // finding theirs; then the page and its config, uncached and the only
       // paths invalidated, which switch new visitors to the new assets.

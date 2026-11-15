@@ -1,0 +1,33 @@
+:host {
+  display: block;
+}
+:host main {
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem;
+}
+:host header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+:host h1 {
+  font-size: 1.875rem;
+  line-height: 1.2;
+}
+:host .account {
+  text-align: right;
+  font-size: 0.875rem;
+}
+:host .panels {
+  display: grid;
+  gap: 2.5rem;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 48rem) {
+  :host .panels {
+    grid-template-columns: 1fr 1fr;
+  }
+}
