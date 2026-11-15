@@ -1,4 +1,4 @@
-// End-to-end tests: a real browser drives the deployed web components, served
+// End-to-end tests: a real browser drives the deployed Boba web components, served
 // from the emulated site bucket, through Cognito, API Gateway, Lambda and
 // DynamoDB in AWS Emulator.
 import assert from 'node:assert/strict';
@@ -51,7 +51,6 @@ describe('Vendor Tracker in the browser', () => {
     assert.deepEqual(pageErrors, [], 'the page threw uncaught errors');
   });
 
-  // Locators pierce the components' open shadow roots.
   const heading = (name: string) => page.getByRole('heading', { name, exact: true });
   const signIn = async (email: string, password = TEST_PASSWORD) => {
     await page.getByLabel('Email', { exact: true }).fill(email);
@@ -146,6 +145,7 @@ describe('Vendor Tracker in the browser', () => {
       // and so does the session.
       await page.reload();
       await dashboardReady();
+      assert.equal(new URL(page.url()).pathname, '/');
       await vendorRow(name).waitFor();
 
       await vendorRow(name).getByRole('button', { name: `Delete ${name}` }).click();
@@ -176,8 +176,13 @@ describe('Vendor Tracker in the browser', () => {
     it('signs out and requires sign-in again, even after a reload', async () => {
       await page.getByRole('button', { name: 'Sign out' }).click();
       await heading('Sign in').waitFor();
+      assert.equal(new URL(page.url()).pathname, '/sign-in');
       await page.reload();
       await heading('Sign in').waitFor();
+      // The dashboard's route sends a signed-out visitor back.
+      await page.goto(gateway.url);
+      await heading('Sign in').waitFor();
+      assert.equal(new URL(page.url()).pathname, '/sign-in');
       assert.equal(await page.locator('vendor-form').count(), 0);
     });
 

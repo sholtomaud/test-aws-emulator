@@ -85,7 +85,7 @@ jobs:
           role-session-name: vendor-tracker-${{ inputs.environment }}-${{ github.run_id }}
 
       - name: Build the frontend
-        run: node scripts/build-frontend.ts
+        run: npm run build
 
       - name: Prepare the change set
         run: |

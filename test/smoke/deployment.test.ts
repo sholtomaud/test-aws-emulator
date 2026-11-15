@@ -81,7 +81,7 @@ describe('deployed stack', () => {
     assert.equal(Table?.BillingModeSummary?.BillingMode, 'PAY_PER_REQUEST');
   });
 
-  /** The asset paths the deployed index.html references, e.g. /assets/app-<hash>.js. */
+  /** The asset paths the deployed index.html references, e.g. /assets/index-<hash>.js. */
   const pageAssets = async () => {
     const html = await (await fetch(gateway.url)).text();
     return [...html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)].map((match) => match[1]!);
@@ -92,9 +92,11 @@ describe('deployed stack', () => {
     const keys = (Contents ?? []).map((object) => object.Key);
     for (const key of ['index.html', 'config.json']) assert.ok(keys.includes(key), `missing ${key} in the site bucket`);
     const assets = await pageAssets();
-    assert.equal(assets.length, 2, `index.html should reference a script and a stylesheet, got ${assets.join(', ')}`);
+    for (const extension of ['.js', '.css']) {
+      assert.ok(assets.some((asset) => asset.endsWith(extension)), `index.html should reference a ${extension} asset, got ${assets.join(', ')}`);
+    }
     for (const asset of assets) {
-      assert.match(asset, /^\/assets\/(app|styles)-[A-Z0-9]{8}\.(js|css)$/, 'asset names carry a content hash');
+      assert.match(asset, /^\/assets\/[a-z-]+-[\w-]{8}\.(js|css)$/, 'asset names carry a content hash');
       assert.ok(keys.includes(asset.slice(1)), `missing ${asset} in the site bucket`);
     }
   });
@@ -110,7 +112,7 @@ describe('deployed stack', () => {
     const page = await fetch(gateway.url);
     assert.equal(page.status, 200);
     assert.match(page.headers.get('content-type') ?? '', /text\/html/);
-    assert.match(await page.text(), /<vendor-app>/);
+    assert.match(await page.text(), /id="router-outlet"/);
 
     const script = (await pageAssets()).find((asset) => asset.endsWith('.js'))!;
     const response = await fetch(`${gateway.url}${script}`);
@@ -121,7 +123,7 @@ describe('deployed stack', () => {
   it('serves index.html for unknown paths, like the CloudFront error response', async () => {
     const page = await fetch(`${gateway.url}/some/client/route`);
     assert.equal(page.status, 200);
-    assert.match(await page.text(), /<vendor-app>/);
+    assert.match(await page.text(), /id="router-outlet"/);
   });
 
   it('serves the runtime config for this deployment', async () => {
@@ -135,7 +137,7 @@ describe('deployed stack', () => {
     // The emulator's CloudFront ignores DefaultRootObject, so ask for the file.
     const page = await send({ url: distributionUrl(outputs, '/index.html') });
     assert.equal(page.status, 200);
-    assert.match(page.body, /<vendor-app>/);
+    assert.match(page.body, /id="router-outlet"/);
   });
 
   for (const method of ['GET', 'POST', 'DELETE']) {

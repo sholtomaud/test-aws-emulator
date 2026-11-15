@@ -1632,7 +1632,10 @@
               ]
             },
             {
-              "Action": "s3:GetObject",
+              "Action": [
+                "s3:GetObject",
+                "s3:ListBucket"
+              ],
               "Condition": {
                 "StringEquals": {
                   "AWS:SourceArn": {
@@ -1660,20 +1663,28 @@
               "Principal": {
                 "Service": "cloudfront.amazonaws.com"
               },
-              "Resource": {
-                "Fn::Join": [
-                  "",
-                  [
-                    {
-                      "Fn::GetAtt": [
-                        "VendorSiteBucket4A2885C5",
-                        "Arn"
-                      ]
-                    },
-                    "/*"
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "VendorSiteBucket4A2885C5",
+                          "Arn"
+                        ]
+                      },
+                      "/*"
+                    ]
                   ]
-                ]
-              }
+                },
+                {
+                  "Fn::GetAtt": [
+                    "VendorSiteBucket4A2885C5",
+                    "Arn"
+                  ]
+                }
+              ]
             }
           ],
           "Version": "2012-10-17"

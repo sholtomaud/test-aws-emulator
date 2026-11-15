@@ -28,7 +28,7 @@ contact email). What the repository shows is the rest:
 
 | Piece | Implementation |
 | --- | --- |
-| Frontend | Native web components in TypeScript (no framework), bundled with esbuild |
+| Frontend | [Boba](https://github.com/sholtomaud/boba): native web components in TypeScript with a small router and store, built with Vite |
 | Auth | Amazon Cognito user pool, called directly with `fetch` |
 | API | API Gateway REST API with a Cognito authorizer: `GET`/`POST`/`DELETE /api/vendors` |
 | Logic | Three Lambda functions (Node.js 26) |
@@ -169,7 +169,7 @@ All suites use Node's built-in test runner.
 | CDK | `make test-cdk` | nothing | The infrastructure: template assertions, cdk-nag policy checks and per-stage snapshots (see below) |
 | Functional | `make test-functional` | emulator | The Lambda handlers in-process against emulated DynamoDB, including that users' vendors are kept apart; the frontend's Cognito client against an emulated user pool |
 | Smoke | `make test-smoke` | emulator + `make deploy` | The deployed stack: outputs, table, site bucket, CloudFront (site and API), 401 without or with a forged token, WAF blocking direct API calls, one authenticated round trip through API Gateway, Lambda and DynamoDB, and two users who can't see or delete each other's vendors |
-| End-to-end | `make test-e2e` | emulator + `make deploy` | Chromium (Playwright) drives the deployed web components: sign-up, confirmation, sign-in, add/reload/delete a vendor, sign-out, expired session, layout |
+| End-to-end | `make test-e2e` | emulator + `make deploy` | Chromium (Playwright) drives the deployed Boba components: sign-up, confirmation, sign-in, add/reload/delete a vendor, sign-out, expired session, layout |
 
 ### Infrastructure tests
 
@@ -299,9 +299,49 @@ are written up, ready to file, in
   the CloudFront name. Alias records also need `EvaluateTargetHealth` set,
   which the stack does.
 
+## Frontend
+
+The frontend is a [Boba](https://github.com/sholtomaud/boba) app: custom
+elements rendered in the light DOM, a client-side router and an
+`EventTarget`-backed store, with no runtime dependencies.
+
+```
+src/frontend/
+  index.html               the page: a script tag and the router outlet
+  main.ts                  loads config.json, registers the routes, boots the router
+  core/                    Boba's BaseComponent, Router and Store (copied from its template)
+  components/<tag>/        one folder per component: <tag>.html, <tag>.css (:host-scoped), <tag>.ts
+    sign-in-page/          route /sign-in: sign-in, sign-up, email confirmation
+    vendors-page/          route /: the dashboard, made of vendor-form and vendor-list
+  store/app-store.ts       the signed-in session
+  services.ts              the API and auth clients; signing in or out updates the store
+  lib/                     API, Cognito and config clients (framework-free, unit tested)
+  styles/global.css        design tokens and shared base styles
+```
+
+Route guards send a signed-out visitor to `/sign-in` and a signed-in one to
+`/`; a change of session in the store navigates the same way. Vite bundles the
+app (`npm run build`, which `make build` runs) and loads each page's component
+on first use.
+
+For frontend work with hot reload, run the Vite dev server next to the deployed
+backend. It serves the working tree and passes `/api`, `/cognito` and
+`/config.json` to the local gateway:
+
+```bash
+make serve
+```
+
+```bash
+npm run dev
+```
+
+(With the dev container, the Vite port is not published; use `make deploy` and
+`make serve` there.)
+
 ## Differences from the tutorial
 
-- Native web components instead of Next.js/React, and direct Cognito calls
+- Native web components (Boba) instead of Next.js/React, and direct Cognito calls
   (`USER_PASSWORD_AUTH`) instead of Amplify. The user pool client enables that
   flow.
 - `config.json` at runtime replaces build-time `NEXT_PUBLIC_*` variables.
@@ -386,7 +426,7 @@ abruptly:
   the API's 5xx, raise an alarm during the release, CodeDeploy moves the aliases
   back and the deploy fails.
 - **Frontend: old and new side by side.** The build names the script and
-  stylesheet after their content (`assets/app-<hash>.js`). They are uploaded
+  stylesheet after their content (`assets/index-<hash>.js`, and one file per page, loaded when its route is first shown). They are uploaded
   first, cached for a year and never deleted, so a page loaded before the
   release keeps working; then `index.html` and `config.json` are replaced,
   uncached, and only they are invalidated in CloudFront.
@@ -458,7 +498,8 @@ Containerfile            AWS Emulator image, and the dev image (emulator + Node.
 Makefile                 every task
 infra/                   CDK app and stack
 src/lambda/              Lambda handlers
-src/frontend/            web components, API and auth clients
+src/frontend/            the Boba app (see "Frontend" below)
+vite.config.ts           frontend build (dist/frontend) and dev server
 docs/emulator-issues.md  emulator differences from AWS, written up for its issue tracker
 scripts/dev-container.sh runs the toolchain in the dev container (macOS)
 scripts/emulator.sh      emulator lifecycle for each runtime

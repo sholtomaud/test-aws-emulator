@@ -1,0 +1,36 @@
+<!-- One form for the three steps; sign-in-page.ts shows the parts of the current one. -->
+<form class="card" novalidate>
+  <h2></h2>
+  <p class="notice muted" hidden></p>
+  <div role="alert" hidden></div>
+
+  <fieldset data-step="sign-in sign-up">
+    <div class="field">
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="username" required />
+    </div>
+    <div class="field">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" minlength="12" required />
+    </div>
+  </fieldset>
+  <fieldset data-step="confirm">
+    <div class="field">
+      <label for="code">Verification code</label>
+      <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required />
+    </div>
+  </fieldset>
+
+  <button class="primary" type="submit"></button>
+
+  <p class="switch" data-step="sign-in">
+    No account? <button class="link" type="button" data-mode="sign-up">Create one</button>
+  </p>
+  <p class="switch" data-step="sign-up">
+    Have an account? <button class="link" type="button" data-mode="sign-in">Sign in</button>
+  </p>
+  <p class="switch" data-step="confirm">
+    <button class="link" type="button" data-resend>Resend code</button> ·
+    <button class="link" type="button" data-mode="sign-in">Back to sign in</button>
+  </p>
+</form>
