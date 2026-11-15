@@ -11,12 +11,13 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { after, describe, it } from 'node:test';
-import { App, Validations } from 'aws-cdk-lib';
-import type { Stack } from 'aws-cdk-lib';
+import { Validations } from 'aws-cdk-lib';
+import type { App, Stack } from 'aws-cdk-lib';
 import { AwsSolutionsChecks } from 'cdk-nag';
 import { GitHubDeployStack } from '../../infra/github-deploy-stack.ts';
 import { VendorStack } from '../../infra/vendor-stack.ts';
 import type { VendorStackProps } from '../../infra/vendor-stack.ts';
+import { quietly, testApp } from './app.ts';
 
 interface Violation {
   rule: string;
@@ -38,16 +39,21 @@ const results: { stack: string; violations: Violation[]; acknowledged: Acknowled
  * over. The acknowledgements are recorded too, once each, at the construct
  * they were made on (CDK keeps them there as metadata).
  */
-const findings = (build: (app: App) => Stack[], record = true): Violation[] => {
+const findings = (build: (app: App) => Stack[], { record = true, quiet = false } = {}): Violation[] => {
   const outdir = mkdtempSync(join(tmpdir(), 'vendor-nag-'));
-  const app = new App({ outdir });
+  const app = testApp({ outdir });
   const stacks = build(app);
   Validations.of(app).addPlugins(new AwsSolutionsChecks(app));
-  try {
-    app.synth();
-  } catch (error) {
-    if (!existsSync(join(outdir, 'validation-report.json'))) throw error;
-  }
+  const synth = () => {
+    try {
+      app.synth();
+    } catch (error) {
+      if (!existsSync(join(outdir, 'validation-report.json'))) throw error;
+    }
+  };
+  // cdk-nag prints its findings during synth; `quiet` keeps expected ones out of the log.
+  if (quiet) quietly(synth);
+  else synth();
   const report = join(outdir, 'validation-report.json');
   const violations: Violation[] = [];
   if (existsSync(report)) {
@@ -130,14 +136,19 @@ describe('cdk-nag AWS Solutions checks', () => {
     );
   });
 
-  it('catch a new finding that nobody acknowledged', () => {
-    // A guard on the guard: the checks are live, not silently passing.
-    const violations = findings((app) => {
-      const stack = new VendorStack(app, 'VendorStack-canary', { frontendDir: frontendDir(), env, stage: 'dev' });
-      new (require('aws-cdk-lib').aws_s3.Bucket)(stack, 'Unprotected');
-      return [stack];
-    }, false);
-    const rules = violations.map((v) => v.rule);
+  it('catch a new finding that nobody acknowledged', (t) => {
+    // A guard on the guard: the checks are live, not silently passing. The
+    // canary's findings are expected, so they are kept out of the log.
+    const violations = findings(
+      (app) => {
+        const stack = new VendorStack(app, 'VendorStack-canary', { frontendDir: frontendDir(), env, stage: 'dev' });
+        new (require('aws-cdk-lib').aws_s3.Bucket)(stack, 'Unprotected');
+        return [stack];
+      },
+      { record: false, quiet: true },
+    );
+    const rules = [...new Set(violations.map((v) => v.rule))].sort();
     assert.ok(rules.includes('AwsSolutions-S10'), `expected S10 (no SSL enforcement), got ${rules.join(', ')}`);
+    t.diagnostic(`canary: cdk-nag caught ${rules.join(' and ')} on an unprotected bucket, as expected (output hidden)`);
   });
 });

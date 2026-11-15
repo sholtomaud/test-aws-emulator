@@ -4,16 +4,16 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { before, describe, it } from 'node:test';
-import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { GitHubDeployStack } from '../../infra/github-deploy-stack.ts';
 import { VendorStack } from '../../infra/vendor-stack.ts';
 import type { VendorStackProps } from '../../infra/vendor-stack.ts';
+import { testApp } from './app.ts';
 
 const synth = (emulator: boolean, props: VendorStackProps = {}): Template => {
   const frontendDir = mkdtempSync(join(tmpdir(), 'vendor-frontend-'));
   writeFileSync(join(frontendDir, 'index.html'), '<vendor-app></vendor-app>');
-  const app = new App({ outdir: mkdtempSync(join(tmpdir(), 'vendor-cdk-')) });
+  const app = testApp({ outdir: mkdtempSync(join(tmpdir(), 'vendor-cdk-')) });
   return Template.fromStack(new VendorStack(app, 'VendorStack', { frontendDir, emulator, ...props }));
 };
 
@@ -241,7 +241,7 @@ describe('VendorStack stages', () => {
 
 describe('GitHubDeployStack', () => {
   const template = Template.fromStack(
-    new GitHubDeployStack(new App(), 'Deploy', { repository: 'octo/vendors', environments: ['dev', 'prod'] }),
+    new GitHubDeployStack(testApp(), 'Deploy', { repository: 'octo/vendors', environments: ['dev', 'prod'] }),
   );
 
   it('trusts GitHub OIDC tokens only for this repository and each environment', () => {
@@ -275,6 +275,6 @@ describe('GitHubDeployStack', () => {
   });
 
   it('refuses a malformed repository', () => {
-    assert.throws(() => new GitHubDeployStack(new App(), 'X', { repository: 'nope', environments: ['dev'] }), /owner\/name/);
+    assert.throws(() => new GitHubDeployStack(testApp(), 'X', { repository: 'nope', environments: ['dev'] }), /owner\/name/);
   });
 });

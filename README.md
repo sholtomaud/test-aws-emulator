@@ -173,7 +173,10 @@ All suites use Node's built-in test runner.
 
 ### Infrastructure tests
 
-The CDK app is tested at three levels, in the CDK suite (`test/cdk/`, no AWS and no emulator):
+The CDK app is tested at three levels, in the CDK suite (`test/cdk/`, no AWS and no emulator).
+Lambda bundling is off in these tests (`test/cdk/app.ts`): they check the
+infrastructure, not the code. The bundles are built and run where it counts,
+by `make deploy` and the smoke and end-to-end tests on the emulator.
 
 - **Assertions** (`test/cdk/stack.test.ts`) on what matters: the table keys,
   least-privilege grants, the authorizer on every method, the WAF rule and its

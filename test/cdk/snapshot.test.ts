@@ -14,11 +14,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
-import { App } from 'aws-cdk-lib';
 import { Annotations, Match, Template } from 'aws-cdk-lib/assertions';
 import { GitHubDeployStack } from '../../infra/github-deploy-stack.ts';
 import { VendorStack } from '../../infra/vendor-stack.ts';
 import type { VendorStackProps } from '../../infra/vendor-stack.ts';
+import { testApp } from './app.ts';
 
 const SNAPSHOTS = fileURLToPath(new URL('./__snapshots__/', import.meta.url));
 const update = process.env.UPDATE_SNAPSHOTS === '1';
@@ -63,7 +63,7 @@ const stages: [string, VendorStackProps][] = [
 describe('template snapshots', () => {
   for (const [name, props] of stages) {
     it(`VendorStack ${name}`, () => {
-      const app = new App({ outdir: mkdtempSync(join(tmpdir(), 'vendor-cdk-')) });
+      const app = testApp({ outdir: mkdtempSync(join(tmpdir(), 'vendor-cdk-')) });
       const stack = new VendorStack(app, name === 'emulator' ? 'VendorStack' : `VendorStack-${name}`, {
         frontendDir: frontendDir(),
         env,
@@ -78,7 +78,7 @@ describe('template snapshots', () => {
   }
 
   it('GitHub deploy roles', () => {
-    const stack = new GitHubDeployStack(new App(), 'VendorTrackerGitHubDeploy', {
+    const stack = new GitHubDeployStack(testApp(), 'VendorTrackerGitHubDeploy', {
       repository: 'owner/vendor-tracker',
       environments: ['dev', 'test', 'uat', 'prod'],
       env,
