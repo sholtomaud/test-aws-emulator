@@ -20,7 +20,9 @@ EXPOSE 9297
 ENTRYPOINT ["aws-emulator", "-b", "0.0.0.0"]
 
 # Node.js comes from the official image; its binaries run on Amazon Linux 2023.
-FROM docker.io/library/node:24-bookworm-slim AS node
+# It is pulled from Amazon ECR Public's mirror of Docker Hub's official images,
+# the registry the base image already comes from, so a build needs no Docker Hub.
+FROM public.ecr.aws/docker/library/node:24-bookworm-slim AS node
 
 FROM emulator AS dev
 USER 0
