@@ -137,7 +137,7 @@ describe('deployed stack', () => {
     // The emulator's CloudFront ignores DefaultRootObject, so ask for the file.
     const page = await send({ url: distributionUrl(outputs, '/index.html') });
     assert.equal(page.status, 200);
-    assert.match(page.body, /<vendor-app>/);
+    assert.match(page.body, /id="router-outlet"/);
   });
 
   for (const method of ['GET', 'POST', 'DELETE']) {
