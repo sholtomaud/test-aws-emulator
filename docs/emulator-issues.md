@@ -13,6 +13,17 @@ Emulator version / Impact and workaround). To file one, open
 <https://github.com/aws/aws-emulator/issues/new/choose>, pick that form and
 paste the sections.
 
+To file them all from a terminal with the GitHub CLI, signed in as the account
+they should come from:
+
+```bash
+scripts/file-emulator-issues.sh            # dry run: writes each issue to reports/emulator-issues/
+scripts/file-emulator-issues.sh --create   # files them, skipping titles already on aws/aws-emulator
+```
+
+`--only 10,11` or `--skip 6` choose sections. Issue 6's expected behaviour has
+not been checked against AWS.
+
 Already reported, so not repeated here (add a 👍 instead):
 
 - [aws/aws-emulator#373](https://github.com/aws/aws-emulator/issues/373):
