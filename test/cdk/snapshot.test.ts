@@ -3,9 +3,9 @@
 // fails here until it is accepted, so it shows up in review as a diff of
 // test/cdk/__snapshots__/. Accept intended changes with `make snapshots`.
 //
-// Content hashes (Lambda bundles, the frontend asset) are replaced with a
-// placeholder: code changes are covered by the other suites, and would
-// otherwise churn every snapshot.
+// Content hashes (Lambda bundles, the frontend asset, the code hash in each
+// Lambda version's logical id) are replaced with a placeholder: code changes
+// are covered by the other suites, and would otherwise churn every snapshot.
 //
 // Also checks that every stage synthesizes without CDK warnings or errors.
 import assert from 'node:assert/strict';
@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import { Annotations, Match, Template } from 'aws-cdk-lib/assertions';
 import { GitHubDeployStack } from '../../infra/github-deploy-stack.ts';
-import { VendorStack } from '../../infra/vendor-stack.ts';
+import { STAGES, VendorStack, stageSettings } from '../../infra/vendor-stack.ts';
 import type { VendorStackProps } from '../../infra/vendor-stack.ts';
 import { testApp } from './app.ts';
 
@@ -28,6 +28,8 @@ const env = { account: '111111111111', region: 'us-east-1' };
 const normalize = (template: unknown): string =>
   `${JSON.stringify(template, null, 2)
     .replace(/\b[0-9a-f]{64}\b/g, '<asset-hash>')
+    // A Lambda version's logical id ends in a hash of the function's code.
+    .replace(/CurrentVersion([0-9A-F]{8})[0-9a-f]{32}/g, 'CurrentVersion$1<code-hash>')
     .replace(/"aws:asset:path": "[^"]*"/g, '"aws:asset:path": "<asset-path>"')}\n`;
 
 const matchSnapshot = (name: string, actual: string) => {
@@ -53,10 +55,8 @@ const frontendDir = (): string => {
 };
 
 const stages: [string, VendorStackProps][] = [
-  ['dev', { stage: 'dev' }],
-  ['test', { stage: 'test' }],
-  ['uat', { stage: 'uat' }],
-  ['prod', { stage: 'prod', retainData: true }],
+  ...STAGES.map((stage): [string, VendorStackProps] => [stage, stageSettings(stage)]),
+  ['prod-domain', { ...stageSettings('prod'), domain: { domainName: 'vendors.example.com', hostedZone: { id: 'Z0123456789ABC', name: 'example.com' } } }],
   ['emulator', { emulator: true }],
 ];
 
@@ -64,7 +64,7 @@ describe('template snapshots', () => {
   for (const [name, props] of stages) {
     it(`VendorStack ${name}`, () => {
       const app = testApp({ outdir: mkdtempSync(join(tmpdir(), 'vendor-cdk-')) });
-      const stack = new VendorStack(app, name === 'emulator' ? 'VendorStack' : `VendorStack-${name}`, {
+      const stack = new VendorStack(app, name === 'emulator' ? 'VendorStack' : `VendorStack-${name.replace('-domain', '')}`, {
         frontendDir: frontendDir(),
         env,
         ...props,

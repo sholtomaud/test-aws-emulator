@@ -9,7 +9,7 @@ import { request } from 'node:https';
 import { after, before, describe, it } from 'node:test';
 import { CognitoIdentityProviderClient } from '@aws-sdk/client-cognito-identity-provider';
 import { DescribeTableCommand, DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
+import { HeadObjectCommand, ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
 import { distributionUrl, emulatorEndpoint, stackOutputs } from '../../scripts/lib/emulator.ts';
 import type { StackOutputs } from '../../scripts/lib/emulator.ts';
 import { startGateway } from '../../scripts/local-gateway.ts';
@@ -81,12 +81,29 @@ describe('deployed stack', () => {
     assert.equal(Table?.BillingModeSummary?.BillingMode, 'PAY_PER_REQUEST');
   });
 
-  it('has the frontend in the site bucket', async () => {
+  /** The asset paths the deployed index.html references, e.g. /assets/app-<hash>.js. */
+  const pageAssets = async () => {
+    const html = await (await fetch(gateway.url)).text();
+    return [...html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)].map((match) => match[1]!);
+  };
+
+  it('has the page, its config and its content-hashed assets in the site bucket', async () => {
     const { Contents } = await s3.send(new ListObjectsV2Command({ Bucket: outputs.SiteBucketName }));
     const keys = (Contents ?? []).map((object) => object.Key);
-    for (const key of ['index.html', 'app.js', 'styles.css', 'config.json']) {
-      assert.ok(keys.includes(key), `missing ${key} in the site bucket`);
+    for (const key of ['index.html', 'config.json']) assert.ok(keys.includes(key), `missing ${key} in the site bucket`);
+    const assets = await pageAssets();
+    assert.equal(assets.length, 2, `index.html should reference a script and a stylesheet, got ${assets.join(', ')}`);
+    for (const asset of assets) {
+      assert.match(asset, /^\/assets\/(app|styles)-[A-Z0-9]{8}\.(js|css)$/, 'asset names carry a content hash');
+      assert.ok(keys.includes(asset.slice(1)), `missing ${asset} in the site bucket`);
     }
+  });
+
+  it('caches the assets for a year and the page and config never', async () => {
+    const cacheControl = async (Key: string) =>
+      (await s3.send(new HeadObjectCommand({ Bucket: outputs.SiteBucketName, Key }))).CacheControl;
+    for (const asset of await pageAssets()) assert.equal(await cacheControl(asset.slice(1)), 'public, max-age=31536000, immutable');
+    for (const key of ['index.html', 'config.json']) assert.equal(await cacheControl(key), 'no-cache');
   });
 
   it('serves the site', async () => {
@@ -95,9 +112,10 @@ describe('deployed stack', () => {
     assert.match(page.headers.get('content-type') ?? '', /text\/html/);
     assert.match(await page.text(), /<vendor-app>/);
 
-    const script = await fetch(`${gateway.url}/app.js`);
-    assert.equal(script.status, 200);
-    assert.match(script.headers.get('content-type') ?? '', /javascript/);
+    const script = (await pageAssets()).find((asset) => asset.endsWith('.js'))!;
+    const response = await fetch(`${gateway.url}${script}`);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type') ?? '', /javascript/);
   });
 
   it('serves index.html for unknown paths, like the CloudFront error response', async () => {

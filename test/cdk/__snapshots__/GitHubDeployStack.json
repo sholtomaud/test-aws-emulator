@@ -62,7 +62,13 @@
               }
             },
             {
-              "Action": "cloudformation:DescribeStacks",
+              "Action": [
+                "cloudformation:DescribeStacks",
+                "cloudformation:DescribeChangeSet",
+                "cloudformation:ExecuteChangeSet",
+                "cloudformation:GetStackPolicy",
+                "cloudformation:SetStackPolicy"
+              ],
               "Effect": "Allow",
               "Resource": {
                 "Fn::Join": [
@@ -141,7 +147,13 @@
               }
             },
             {
-              "Action": "cloudformation:DescribeStacks",
+              "Action": [
+                "cloudformation:DescribeStacks",
+                "cloudformation:DescribeChangeSet",
+                "cloudformation:ExecuteChangeSet",
+                "cloudformation:GetStackPolicy",
+                "cloudformation:SetStackPolicy"
+              ],
               "Effect": "Allow",
               "Resource": {
                 "Fn::Join": [
@@ -220,7 +232,13 @@
               }
             },
             {
-              "Action": "cloudformation:DescribeStacks",
+              "Action": [
+                "cloudformation:DescribeStacks",
+                "cloudformation:DescribeChangeSet",
+                "cloudformation:ExecuteChangeSet",
+                "cloudformation:GetStackPolicy",
+                "cloudformation:SetStackPolicy"
+              ],
               "Effect": "Allow",
               "Resource": {
                 "Fn::Join": [
@@ -299,7 +317,13 @@
               }
             },
             {
-              "Action": "cloudformation:DescribeStacks",
+              "Action": [
+                "cloudformation:DescribeStacks",
+                "cloudformation:DescribeChangeSet",
+                "cloudformation:ExecuteChangeSet",
+                "cloudformation:GetStackPolicy",
+                "cloudformation:SetStackPolicy"
+              ],
               "Effect": "Allow",
               "Resource": {
                 "Fn::Join": [

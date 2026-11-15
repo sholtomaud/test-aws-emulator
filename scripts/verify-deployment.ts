@@ -58,7 +58,7 @@ const outputs = Object.fromEntries((Stacks?.[0]?.Outputs ?? []).map((o) => [o.Ou
 const onEmulator = Boolean(emulator && local(emulator.hostname));
 const site = onEmulator
   ? `${emulator!.origin}/_aws/cloudfront/${outputs.DistributionId}`
-  : outputs.CloudFrontURL!.replace(/\/+$/, '');
+  : (outputs.SiteURL ?? outputs.CloudFrontURL!).replace(/\/+$/, '');
 const api = outputs.ApiEndpoint!;
 
 const checks: [string, () => Promise<void>][] = [

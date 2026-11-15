@@ -137,6 +137,17 @@
         "CreateVendorHandlerServiceRole60216B76"
       ]
     },
+    "CreateVendorHandlerCurrentVersionBE5D51D6<code-hash>": {
+      "Type": "AWS::Lambda::Version",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "CreateVendorHandlerD64CED83"
+        }
+      },
+      "Metadata": {
+        "aws:cdk:do-not-refactor": true
+      }
+    },
     "GetVendorsHandlerLogs48524D48": {
       "Type": "AWS::Logs::LogGroup",
       "Properties": {
@@ -259,6 +270,17 @@
         "GetVendorsHandlerServiceRole52ED90CB"
       ]
     },
+    "GetVendorsHandlerCurrentVersionA7224E55<code-hash>": {
+      "Type": "AWS::Lambda::Version",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "GetVendorsHandler1B798460"
+        }
+      },
+      "Metadata": {
+        "aws:cdk:do-not-refactor": true
+      }
+    },
     "DeleteVendorHandlerLogs68B3F4A8": {
       "Type": "AWS::Logs::LogGroup",
       "Properties": {
@@ -364,6 +386,92 @@
         "DeleteVendorHandlerServiceRoleDefaultPolicyB2DC0539",
         "DeleteVendorHandlerServiceRole6988B269"
       ]
+    },
+    "DeleteVendorHandlerCurrentVersion4A4AD499<code-hash>": {
+      "Type": "AWS::Lambda::Version",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "DeleteVendorHandler8B7FBD6F"
+        }
+      },
+      "Metadata": {
+        "aws:cdk:do-not-refactor": true
+      }
+    },
+    "CreateVendorHandlerLive6E9F5DF2": {
+      "Type": "AWS::Lambda::Alias",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "CreateVendorHandlerD64CED83"
+        },
+        "FunctionVersion": {
+          "Fn::GetAtt": [
+            "CreateVendorHandlerCurrentVersionBE5D51D6<code-hash>",
+            "Version"
+          ]
+        },
+        "Name": "live"
+      },
+      "UpdatePolicy": {
+        "CodeDeployLambdaAliasUpdate": {
+          "ApplicationName": {
+            "Ref": "ReleasesE6BA3EBF"
+          },
+          "DeploymentGroupName": {
+            "Ref": "CreateVendorHandlerReleaseC45F1098"
+          }
+        }
+      }
+    },
+    "GetVendorsHandlerLive56A332BD": {
+      "Type": "AWS::Lambda::Alias",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "GetVendorsHandler1B798460"
+        },
+        "FunctionVersion": {
+          "Fn::GetAtt": [
+            "GetVendorsHandlerCurrentVersionA7224E55<code-hash>",
+            "Version"
+          ]
+        },
+        "Name": "live"
+      },
+      "UpdatePolicy": {
+        "CodeDeployLambdaAliasUpdate": {
+          "ApplicationName": {
+            "Ref": "ReleasesE6BA3EBF"
+          },
+          "DeploymentGroupName": {
+            "Ref": "GetVendorsHandlerRelease86795FDC"
+          }
+        }
+      }
+    },
+    "DeleteVendorHandlerLiveA5EA18A3": {
+      "Type": "AWS::Lambda::Alias",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "DeleteVendorHandler8B7FBD6F"
+        },
+        "FunctionVersion": {
+          "Fn::GetAtt": [
+            "DeleteVendorHandlerCurrentVersion4A4AD499<code-hash>",
+            "Version"
+          ]
+        },
+        "Name": "live"
+      },
+      "UpdatePolicy": {
+        "CodeDeployLambdaAliasUpdate": {
+          "ApplicationName": {
+            "Ref": "ReleasesE6BA3EBF"
+          },
+          "DeploymentGroupName": {
+            "Ref": "DeleteVendorHandlerRelease4B7DD44A"
+          }
+        }
+      }
     },
     "VendorUserPool97FFFE54": {
       "Type": "AWS::Cognito::UserPool",
@@ -511,7 +619,7 @@
       "UpdateReplacePolicy": "Retain",
       "DeletionPolicy": "Retain"
     },
-    "ApiDeploymentB17BE62D643ca674acf01dddb86c7ce825a1f4db": {
+    "ApiDeploymentB17BE62D5dd4d43b6463f2beb660f4ef558f3347": {
       "Type": "AWS::ApiGateway::Deployment",
       "Properties": {
         "Description": "Automatically created by the RestApi construct",
@@ -546,7 +654,7 @@
           "Format": "{\"requestId\":\"$context.requestId\",\"ip\":\"$context.identity.sourceIp\",\"user\":\"$context.identity.user\",\"caller\":\"$context.identity.caller\",\"requestTime\":\"$context.requestTime\",\"httpMethod\":\"$context.httpMethod\",\"resourcePath\":\"$context.resourcePath\",\"status\":\"$context.status\",\"protocol\":\"$context.protocol\",\"responseLength\":\"$context.responseLength\"}"
         },
         "DeploymentId": {
-          "Ref": "ApiDeploymentB17BE62D643ca674acf01dddb86c7ce825a1f4db"
+          "Ref": "ApiDeploymentB17BE62D5dd4d43b6463f2beb660f4ef558f3347"
         },
         "MethodSettings": [
           {
@@ -598,10 +706,7 @@
       "Properties": {
         "Action": "lambda:InvokeFunction",
         "FunctionName": {
-          "Fn::GetAtt": [
-            "GetVendorsHandler1B798460",
-            "Arn"
-          ]
+          "Ref": "GetVendorsHandlerLive56A332BD"
         },
         "Principal": "apigateway.amazonaws.com",
         "SourceArn": {
@@ -647,10 +752,7 @@
                 },
                 ":apigateway:us-east-1:lambda:path/2015-03-31/functions/",
                 {
-                  "Fn::GetAtt": [
-                    "GetVendorsHandler1B798460",
-                    "Arn"
-                  ]
+                  "Ref": "GetVendorsHandlerLive56A332BD"
                 },
                 "/invocations"
               ]
@@ -670,10 +772,7 @@
       "Properties": {
         "Action": "lambda:InvokeFunction",
         "FunctionName": {
-          "Fn::GetAtt": [
-            "CreateVendorHandlerD64CED83",
-            "Arn"
-          ]
+          "Ref": "CreateVendorHandlerLive6E9F5DF2"
         },
         "Principal": "apigateway.amazonaws.com",
         "SourceArn": {
@@ -719,10 +818,7 @@
                 },
                 ":apigateway:us-east-1:lambda:path/2015-03-31/functions/",
                 {
-                  "Fn::GetAtt": [
-                    "CreateVendorHandlerD64CED83",
-                    "Arn"
-                  ]
+                  "Ref": "CreateVendorHandlerLive6E9F5DF2"
                 },
                 "/invocations"
               ]
@@ -750,10 +846,7 @@
       "Properties": {
         "Action": "lambda:InvokeFunction",
         "FunctionName": {
-          "Fn::GetAtt": [
-            "DeleteVendorHandler8B7FBD6F",
-            "Arn"
-          ]
+          "Ref": "DeleteVendorHandlerLiveA5EA18A3"
         },
         "Principal": "apigateway.amazonaws.com",
         "SourceArn": {
@@ -799,10 +892,7 @@
                 },
                 ":apigateway:us-east-1:lambda:path/2015-03-31/functions/",
                 {
-                  "Fn::GetAtt": [
-                    "DeleteVendorHandler8B7FBD6F",
-                    "Arn"
-                  ]
+                  "Ref": "DeleteVendorHandlerLiveA5EA18A3"
                 },
                 "/invocations"
               ]
@@ -909,6 +999,421 @@
           "Ref": "ApiF70053CD"
         },
         "Type": "COGNITO_USER_POOLS"
+      }
+    },
+    "Api5xxAlarm31F257DC": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "The vendor API answered 5xx: rolls back a Lambda release in progress.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "ApiName",
+            "Value": "Vendor Service"
+          }
+        ],
+        "EvaluationPeriods": 1,
+        "MetricName": "5XXError",
+        "Namespace": "AWS/ApiGateway",
+        "Period": 60,
+        "Statistic": "Sum",
+        "Threshold": 1,
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "ReleasesE6BA3EBF": {
+      "Type": "AWS::CodeDeploy::Application",
+      "Properties": {
+        "ComputePlatform": "Lambda"
+      }
+    },
+    "ReleaseRoleCAEFCF19": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "codedeploy.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "Description": "CodeDeploy: shifts the vendor Lambdas' live aliases during a release",
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":iam::aws:policy/service-role/AWSCodeDeployRoleForLambdaLimited"
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    "CreateVendorHandlerErrorsD1EEBA5A": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "CreateVendorHandler: errors on the live alias. Rolls back a release in progress.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "CreateVendorHandlerD64CED83"
+            }
+          },
+          {
+            "Name": "Resource",
+            "Value": {
+              "Fn::Join": [
+                "",
+                [
+                  {
+                    "Ref": "CreateVendorHandlerD64CED83"
+                  },
+                  ":live"
+                ]
+              ]
+            }
+          }
+        ],
+        "EvaluationPeriods": 1,
+        "MetricName": "Errors",
+        "Namespace": "AWS/Lambda",
+        "Period": 60,
+        "Statistic": "Sum",
+        "Threshold": 1,
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "CreateVendorHandlerThrottlesED642389": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "CreateVendorHandler: throttles on the live alias. Rolls back a release in progress.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "CreateVendorHandlerD64CED83"
+            }
+          },
+          {
+            "Name": "Resource",
+            "Value": {
+              "Fn::Join": [
+                "",
+                [
+                  {
+                    "Ref": "CreateVendorHandlerD64CED83"
+                  },
+                  ":live"
+                ]
+              ]
+            }
+          }
+        ],
+        "EvaluationPeriods": 1,
+        "MetricName": "Throttles",
+        "Namespace": "AWS/Lambda",
+        "Period": 60,
+        "Statistic": "Sum",
+        "Threshold": 1,
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "CreateVendorHandlerReleaseC45F1098": {
+      "Type": "AWS::CodeDeploy::DeploymentGroup",
+      "Properties": {
+        "AlarmConfiguration": {
+          "Alarms": [
+            {
+              "Name": {
+                "Ref": "CreateVendorHandlerErrorsD1EEBA5A"
+              }
+            },
+            {
+              "Name": {
+                "Ref": "CreateVendorHandlerThrottlesED642389"
+              }
+            },
+            {
+              "Name": {
+                "Ref": "Api5xxAlarm31F257DC"
+              }
+            }
+          ],
+          "Enabled": true
+        },
+        "ApplicationName": {
+          "Ref": "ReleasesE6BA3EBF"
+        },
+        "AutoRollbackConfiguration": {
+          "Enabled": true,
+          "Events": [
+            "DEPLOYMENT_FAILURE",
+            "DEPLOYMENT_STOP_ON_REQUEST",
+            "DEPLOYMENT_STOP_ON_ALARM"
+          ]
+        },
+        "DeploymentConfigName": "CodeDeployDefault.LambdaAllAtOnce",
+        "DeploymentStyle": {
+          "DeploymentOption": "WITH_TRAFFIC_CONTROL",
+          "DeploymentType": "BLUE_GREEN"
+        },
+        "ServiceRoleArn": {
+          "Fn::GetAtt": [
+            "ReleaseRoleCAEFCF19",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "GetVendorsHandlerErrorsBA6E00BC": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "GetVendorsHandler: errors on the live alias. Rolls back a release in progress.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "GetVendorsHandler1B798460"
+            }
+          },
+          {
+            "Name": "Resource",
+            "Value": {
+              "Fn::Join": [
+                "",
+                [
+                  {
+                    "Ref": "GetVendorsHandler1B798460"
+                  },
+                  ":live"
+                ]
+              ]
+            }
+          }
+        ],
+        "EvaluationPeriods": 1,
+        "MetricName": "Errors",
+        "Namespace": "AWS/Lambda",
+        "Period": 60,
+        "Statistic": "Sum",
+        "Threshold": 1,
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "GetVendorsHandlerThrottles887728F0": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "GetVendorsHandler: throttles on the live alias. Rolls back a release in progress.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "GetVendorsHandler1B798460"
+            }
+          },
+          {
+            "Name": "Resource",
+            "Value": {
+              "Fn::Join": [
+                "",
+                [
+                  {
+                    "Ref": "GetVendorsHandler1B798460"
+                  },
+                  ":live"
+                ]
+              ]
+            }
+          }
+        ],
+        "EvaluationPeriods": 1,
+        "MetricName": "Throttles",
+        "Namespace": "AWS/Lambda",
+        "Period": 60,
+        "Statistic": "Sum",
+        "Threshold": 1,
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "GetVendorsHandlerRelease86795FDC": {
+      "Type": "AWS::CodeDeploy::DeploymentGroup",
+      "Properties": {
+        "AlarmConfiguration": {
+          "Alarms": [
+            {
+              "Name": {
+                "Ref": "GetVendorsHandlerErrorsBA6E00BC"
+              }
+            },
+            {
+              "Name": {
+                "Ref": "GetVendorsHandlerThrottles887728F0"
+              }
+            },
+            {
+              "Name": {
+                "Ref": "Api5xxAlarm31F257DC"
+              }
+            }
+          ],
+          "Enabled": true
+        },
+        "ApplicationName": {
+          "Ref": "ReleasesE6BA3EBF"
+        },
+        "AutoRollbackConfiguration": {
+          "Enabled": true,
+          "Events": [
+            "DEPLOYMENT_FAILURE",
+            "DEPLOYMENT_STOP_ON_REQUEST",
+            "DEPLOYMENT_STOP_ON_ALARM"
+          ]
+        },
+        "DeploymentConfigName": "CodeDeployDefault.LambdaAllAtOnce",
+        "DeploymentStyle": {
+          "DeploymentOption": "WITH_TRAFFIC_CONTROL",
+          "DeploymentType": "BLUE_GREEN"
+        },
+        "ServiceRoleArn": {
+          "Fn::GetAtt": [
+            "ReleaseRoleCAEFCF19",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "DeleteVendorHandlerErrors1396E8D3": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "DeleteVendorHandler: errors on the live alias. Rolls back a release in progress.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "DeleteVendorHandler8B7FBD6F"
+            }
+          },
+          {
+            "Name": "Resource",
+            "Value": {
+              "Fn::Join": [
+                "",
+                [
+                  {
+                    "Ref": "DeleteVendorHandler8B7FBD6F"
+                  },
+                  ":live"
+                ]
+              ]
+            }
+          }
+        ],
+        "EvaluationPeriods": 1,
+        "MetricName": "Errors",
+        "Namespace": "AWS/Lambda",
+        "Period": 60,
+        "Statistic": "Sum",
+        "Threshold": 1,
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "DeleteVendorHandlerThrottles50073799": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "DeleteVendorHandler: throttles on the live alias. Rolls back a release in progress.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "DeleteVendorHandler8B7FBD6F"
+            }
+          },
+          {
+            "Name": "Resource",
+            "Value": {
+              "Fn::Join": [
+                "",
+                [
+                  {
+                    "Ref": "DeleteVendorHandler8B7FBD6F"
+                  },
+                  ":live"
+                ]
+              ]
+            }
+          }
+        ],
+        "EvaluationPeriods": 1,
+        "MetricName": "Throttles",
+        "Namespace": "AWS/Lambda",
+        "Period": 60,
+        "Statistic": "Sum",
+        "Threshold": 1,
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "DeleteVendorHandlerRelease4B7DD44A": {
+      "Type": "AWS::CodeDeploy::DeploymentGroup",
+      "Properties": {
+        "AlarmConfiguration": {
+          "Alarms": [
+            {
+              "Name": {
+                "Ref": "DeleteVendorHandlerErrors1396E8D3"
+              }
+            },
+            {
+              "Name": {
+                "Ref": "DeleteVendorHandlerThrottles50073799"
+              }
+            },
+            {
+              "Name": {
+                "Ref": "Api5xxAlarm31F257DC"
+              }
+            }
+          ],
+          "Enabled": true
+        },
+        "ApplicationName": {
+          "Ref": "ReleasesE6BA3EBF"
+        },
+        "AutoRollbackConfiguration": {
+          "Enabled": true,
+          "Events": [
+            "DEPLOYMENT_FAILURE",
+            "DEPLOYMENT_STOP_ON_REQUEST",
+            "DEPLOYMENT_STOP_ON_ALARM"
+          ]
+        },
+        "DeploymentConfigName": "CodeDeployDefault.LambdaAllAtOnce",
+        "DeploymentStyle": {
+          "DeploymentOption": "WITH_TRAFFIC_CONTROL",
+          "DeploymentType": "BLUE_GREEN"
+        },
+        "ServiceRoleArn": {
+          "Fn::GetAtt": [
+            "ReleaseRoleCAEFCF19",
+            "Arn"
+          ]
+        }
       }
     },
     "OriginVerifySecret1DED2FB3": {
@@ -1360,6 +1865,23 @@
       }
     },
     "CloudFrontURL": {
+      "Value": {
+        "Fn::Join": [
+          "",
+          [
+            "https://",
+            {
+              "Fn::GetAtt": [
+                "SiteDistribution3FF9535D",
+                "DomainName"
+              ]
+            }
+          ]
+        ]
+      }
+    },
+    "SiteURL": {
+      "Description": "Where users reach the site: the custom domain, or the CloudFront URL",
       "Value": {
         "Fn::Join": [
           "",

@@ -19,6 +19,10 @@ on:
         type: choice
         options: [dev, test, uat, prod]
         default: dev
+      allow_data_replacement:
+        description: Allow replacing or deleting the table or user pool (uat and prod refuse it otherwise; their data is lost)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -53,6 +57,7 @@ jobs:
     with:
       environment: dev
       ref: ${{ needs.commit.outputs.sha }}
+      allow_data_replacement: ${{ inputs.allow_data_replacement == true }}
 
   test:
     needs: [commit, dev]
@@ -63,6 +68,7 @@ jobs:
     with:
       environment: test
       ref: ${{ needs.commit.outputs.sha }}
+      allow_data_replacement: ${{ inputs.allow_data_replacement == true }}
 
   uat:
     needs: [commit, test]
@@ -73,6 +79,7 @@ jobs:
     with:
       environment: uat
       ref: ${{ needs.commit.outputs.sha }}
+      allow_data_replacement: ${{ inputs.allow_data_replacement == true }}
 
   prod:
     needs: [commit, uat]
@@ -83,3 +90,4 @@ jobs:
     with:
       environment: prod
       ref: ${{ needs.commit.outputs.sha }}
+      allow_data_replacement: ${{ inputs.allow_data_replacement == true }}

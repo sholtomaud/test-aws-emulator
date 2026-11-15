@@ -15,7 +15,7 @@ import { Validations } from 'aws-cdk-lib';
 import type { App, Stack } from 'aws-cdk-lib';
 import { AwsSolutionsChecks } from 'cdk-nag';
 import { GitHubDeployStack } from '../../infra/github-deploy-stack.ts';
-import { VendorStack } from '../../infra/vendor-stack.ts';
+import { STAGES, VendorStack, stageSettings } from '../../infra/vendor-stack.ts';
 import type { VendorStackProps } from '../../infra/vendor-stack.ts';
 import { quietly, testApp } from './app.ts';
 
@@ -107,10 +107,7 @@ const require = createRequire(import.meta.url);
 const REPORTS = fileURLToPath(new URL('../../reports/', import.meta.url));
 const env = { account: '111111111111', region: 'us-east-1' };
 const stages: [string, VendorStackProps][] = [
-  ['dev', { stage: 'dev' }],
-  ['test', { stage: 'test' }],
-  ['uat', { stage: 'uat' }],
-  ['prod', { stage: 'prod', retainData: true }],
+  ...STAGES.map((stage): [string, VendorStackProps] => [stage, stageSettings(stage)]),
   ['AWS Emulator', { emulator: true }],
 ];
 
@@ -129,6 +126,20 @@ describe('cdk-nag AWS Solutions checks', () => {
       );
     });
   }
+
+  it('pass for a prod VendorStack on a custom domain (TLS 1.2, so CFR4 needs no acknowledgement)', () => {
+    const violations = findings((app) => [
+      new VendorStack(app, 'VendorStack-proddomain', {
+        frontendDir: frontendDir(),
+        env,
+        ...stageSettings('prod'),
+        domain: { domainName: 'vendors.example.com', hostedZone: { id: 'Z0123456789ABC', name: 'example.com' } },
+      }),
+    ]);
+    assertClean(violations);
+    const recorded = results.find((r) => r.stack === 'VendorStack-proddomain')!;
+    assert.ok(!recorded.acknowledged.some((a) => a.rule === 'AwsSolutions-CFR4'), 'CFR4 should pass, not be acknowledged');
+  });
 
   it('pass for the GitHub deploy roles', () => {
     assertClean(
